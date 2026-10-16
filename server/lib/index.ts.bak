@@ -1,0 +1,84 @@
+*** PATCH 1 — ajouter l'import
+Dans server/index.ts, ajoute `assertSameOrigin` à l'import de ./context.js :
+
+  assertSameOrigin,
+
+*** PATCH 2 — remplacer les en-têtes CORS permissifs
+Remplace le bloc « CORS setup for dev » qui reflète n'importe quel Origin par :
+
+  const allowedOrigins = new Set([
+    config.appUrl,
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+  ]);
+  const requestOrigin = req.headers.origin;
+  if (requestOrigin && allowedOrigins.has(requestOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    res.writeHead(requestOrigin && !allowedOrigins.has(requestOrigin) ? 403 : 204);
+    res.end();
+    return;
+  }
+
+Puis, au début du `try`, avant `buildContext(fetchReq)`, ajoute :
+
+    assertSameOrigin(fetchReq);
+
+NOTE : si le frontend de production est hébergé sur un autre domaine, ajoute son origine exacte dans `allowedOrigins`. Ne mets pas `*` avec les cookies.
+
+*** PATCH 3 — appliquer le rate limit au login
+Dans la route POST `/api/auth/login`, après la validation de email/password et avant `userRes`, ajoute :
+
+      const loginEmail = String(email).trim().toLowerCase();
+      const loginIpHash = ctx.ip ? sha256(ctx.ip) : null;
+      if (await tooManyLoginAttempts(ctx.restaurantId, loginEmail, loginIpHash)) {
+        throw new HttpError(429, "Trop de tentatives de connexion. Réessaie dans 15 minutes.");
+      }
+
+Remplace le paramètre `email.trim()` de la requête par `loginEmail`.
+Après avoir récupéré `user` et avant tout retour d'identifiants invalides, utilise ce flux pour enregistrer chaque tentative :
+
+      if (!user || !user.password_hash) {
+        await recordLoginAttempt(ctx.restaurantId, loginEmail, loginIpHash, false);
+        throw new HttpError(401, "Identifiants invalides.");
+      }
+      const valid = await verifyPassword(password, user.password_hash);
+      if (!valid) {
+        await recordLoginAttempt(ctx.restaurantId, loginEmail, loginIpHash, false);
+        throw new HttpError(401, "Identifiants invalides.");
+      }
+      await recordLoginAttempt(ctx.restaurantId, loginEmail, loginIpHash, true);
+
+Garde ensuite le contrôle `email_verified` existant.
+
+*** PATCH 4 — statut de paiement
+Dans `/api/payments/status`, remplace le bloc qui met à jour uniquement `payments` par :
+
+      await withTransaction(async (client) => {
+        // Verrouiller la ligne du paiement et ne jamais rétrograder un paiement déjà payé.
+        const locked = await client.query(
+          `SELECT id, order_id, status FROM payments WHERE id = $1 FOR UPDATE`,
+          [payment.id],
+        );
+        const current = locked.rows[0];
+        if (!current) throw new HttpError(404, "Paiement introuvable.");
+        const finalStatus = current.status === "paid" ? "paid" : status;
+        await client.query(
+          `UPDATE payments SET status = $1, updated_at = now() WHERE id = $2`,
+          [finalStatus, payment.id],
+        );
+        if (finalStatus === "paid") {
+          await client.query(
+            `UPDATE orders SET status = 'confirmed', updated_at = now()
+             WHERE id = $1 AND restaurant_id = $2 AND status = 'pending'`,
+            [current.order_id, ctx.restaurantId],
+          );
+        }
+      });
+
+IMPORTANT : le code ci-dessus ne remplace pas la nécessité de confirmer les codes de statut PayGate avec la documentation officielle et de traiter les paiements tardifs d'une commande annulée. Fais les tests en environnement de test avant la production.

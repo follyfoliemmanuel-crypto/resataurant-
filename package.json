@@ -1,0 +1,47 @@
+{
+  "name": "savora",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Plateforme restaurant commercialisable — menu, commandes, dashboard, Neon PostgreSQL",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "dev:api": "tsx server/index.ts",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint src server tests",
+    "preview": "vite preview",
+    "typecheck": "tsc -b && tsc -p tsconfig.server.json --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "migrate": "node database/migrate.mjs",
+    "seed": "node database/seed.mjs",
+    "start": "tsx server/index.ts"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "lucide-react": "^0.544.0",
+    "pg": "^8.16.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.9.4",
+    "recharts": "^3.2.1",
+    "resend": "^6.33.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.13",
+    "@types/node": "^24.13.3",
+    "@types/pg": "^8.15.5",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "herozion": "^2.0.14",
+    "oxlint": "^1.81.0",
+    "tailwindcss": "^4.1.13",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.2",
+    "vite": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

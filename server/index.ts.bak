@@ -1,0 +1,1181 @@
+import http from "node:http";
+import { randomInt } from "node:crypto";
+import { config } from "./lib/config.js";
+import {
+  buildContext,
+  requirePermission,
+  publicUser,
+  sessionCookieHeader,
+  clearSessionCookie,
+} from "./context.js";
+import { query, withTransaction } from "./lib/db.js";
+import { HttpError, errorResponse, json } from "./lib/http.js";
+import {
+  hashPassword,
+  verifyPassword,
+  randomToken,
+  sha256,
+} from "./lib/crypto.js";
+import {
+  computeOrderTotals,
+  applyPromotion,
+  buildWhatsappMessage,
+  whatsappUrl,
+} from "./lib/pricing.js";
+import { writeAudit, notifyStaff } from "./lib/audit.js";
+import { sendVerificationEmail } from "./lib/mail.js";
+import { tooManyLoginAttempts, recordLoginAttempt } from "./lib/rate-limit.js";
+
+async function parseBody(req: http.IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    req.on("data", (chunk) => {
+      data += chunk;
+    });
+    req.on("end", () => {
+      if (!data) return resolve({});
+      try {
+        resolve(JSON.parse(data));
+      } catch {
+        reject(new HttpError(400, "Corps JSON invalide."));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function toFetchRequest(req: http.IncomingMessage): Request {
+  const host = req.headers.host ?? "localhost";
+  const url = `http://${host}${req.url}`;
+  const headers = new Headers();
+
+  for (const [key, val] of Object.entries(req.headers)) {
+    if (Array.isArray(val)) {
+      val.forEach((v) => headers.append(key, v));
+    } else if (val !== undefined) {
+      headers.set(key, val);
+    }
+  }
+
+  return new Request(url, {
+    method: req.method,
+    headers,
+  });
+}
+
+export const server = http.createServer(async (req, res) => {
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    req.headers.origin || "http://localhost:5173",
+  );
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, Cookie",
+  );
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const fetchReq = toFetchRequest(req);
+  const url = new URL(fetchReq.url);
+  const pathname = url.pathname;
+
+  try {
+    const ctx = await buildContext(fetchReq);
+
+    // --- PUBLIC RESTAURANT INFO & SETTINGS ---
+    if (req.method === "GET" && pathname === "/api/restaurant") {
+      const restRes = await query(
+        `SELECT r.id, r.slug, r.plan, s.restaurant_name, s.logo_url, s.description,
+                s.phone, s.whatsapp_number, s.email, s.address, s.city, s.currency,
+                s.primary_color, s.secondary_color, s.delivery_enabled, s.delivery_fee,
+                s.opening_hours, s.features
+         FROM restaurants r
+         LEFT JOIN restaurant_settings s ON s.restaurant_id = r.id
+         WHERE r.id = $1 LIMIT 1`,
+        [ctx.restaurantId],
+      );
+
+      return sendResponse(res, json({ restaurant: restRes.rows[0] }));
+    }
+
+    // --- PUBLIC MENU ---
+    if (req.method === "GET" && pathname === "/api/menu") {
+      const catsRes = await query(
+        `SELECT id, name, description, image_url, position, is_active
+         FROM categories
+         WHERE restaurant_id = $1 AND is_active = TRUE
+         ORDER BY position ASC, created_at ASC`,
+        [ctx.restaurantId],
+      );
+
+      const platsRes = await query(
+        `SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url,
+                p.is_available, p.is_popular, p.position,
+                COALESCE(s.quantity, 0) AS stock_quantity
+         FROM plats p
+         LEFT JOIN stock s ON s.plat_id = p.id
+         WHERE p.restaurant_id = $1 AND p.is_available = TRUE
+         ORDER BY p.position ASC, p.created_at ASC`,
+        [ctx.restaurantId],
+      );
+
+      return sendResponse(
+        res,
+        json({
+          categories: catsRes.rows,
+          plats: platsRes.rows,
+        }),
+      );
+    }
+
+    // --- PROMOTIONS ---
+    if (req.method === "POST" && pathname === "/api/promotions/check") {
+      const body = await parseBody(req);
+      const code = String(body.code ?? "")
+        .trim()
+        .toUpperCase();
+
+      const promoRes = await query(
+        `SELECT id, name, code, type, value
+         FROM promotions
+         WHERE restaurant_id = $1 AND UPPER(code) = $2 AND is_active = TRUE
+           AND start_date <= now() AND end_date >= now()
+         LIMIT 1`,
+        [ctx.restaurantId, code],
+      );
+
+      if (promoRes.rows.length === 0) {
+        return sendResponse(
+          res,
+          json(
+            { valid: false, message: "Code promo invalide ou expiré." },
+            404,
+          ),
+        );
+      }
+
+      return sendResponse(
+        res,
+        json({ valid: true, promotion: promoRes.rows[0] }),
+      );
+    }
+
+    // --- CREATE ORDER ---
+    if (req.method === "POST" && pathname === "/api/orders") {
+      const body = await parseBody(req);
+      const { items, customer, deliveryMethod, address, note, promoCode } =
+        body;
+
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        throw new HttpError(400, "Le panier ne peut pas être vide.");
+      }
+
+      if (!customer?.name || !customer?.phone) {
+        throw new HttpError(
+          400,
+          "Le nom et le numéro de téléphone sont obligatoires.",
+        );
+      }
+
+      const settingsRes = await query(
+        `SELECT delivery_enabled, delivery_fee, currency, whatsapp_number
+         FROM restaurant_settings WHERE restaurant_id = $1`,
+        [ctx.restaurantId],
+      );
+
+      const settings = settingsRes.rows[0] || {
+        delivery_enabled: true,
+        delivery_fee: 0,
+        currency: "XOF",
+        whatsapp_number: "",
+      };
+
+      const platIds = items.map((i: any) => i.platId);
+      const dbPlatsRes = await query(
+        `SELECT id, name, price FROM plats
+         WHERE id = ANY($1) AND restaurant_id = $2`,
+        [platIds, ctx.restaurantId],
+      );
+
+      const dbPlatsMap = new Map(dbPlatsRes.rows.map((p) => [p.id, p]));
+
+      const pricedLines = items.map((item: any) => {
+        const p = dbPlatsMap.get(item.platId);
+
+        if (!p) {
+          throw new HttpError(400, `Plat introuvable: ${item.platId}`);
+        }
+
+        const qty = Math.max(1, Math.min(50, Number(item.quantity) || 1));
+        const price = Number(p.price);
+
+        return {
+          platId: p.id,
+          name: p.name,
+          quantity: qty,
+          unitPrice: price,
+          subtotal: price * qty,
+        };
+      });
+
+      let discount = 0;
+      let appliedPromo: { type: "percent" | "fixed"; value: number } | null =
+        null;
+
+      if (promoCode) {
+        const promoRes = await query<{
+          type: "percent" | "fixed";
+          value: number;
+        }>(
+          `SELECT type, value FROM promotions
+           WHERE restaurant_id = $1 AND UPPER(code) = $2
+             AND is_active = TRUE AND start_date <= now() AND end_date >= now()`,
+          [ctx.restaurantId, String(promoCode).toUpperCase()],
+        );
+
+        if (promoRes.rows.length > 0) {
+          appliedPromo = promoRes.rows[0];
+
+          const rawSubtotal = pricedLines.reduce(
+            (acc, l) => acc + l.subtotal,
+            0,
+          );
+
+          discount = applyPromotion(rawSubtotal, appliedPromo);
+        }
+      }
+
+      const totals = computeOrderTotals({
+        lines: pricedLines,
+        deliveryMethod: deliveryMethod === "delivery" ? "delivery" : "pickup",
+        deliveryEnabled: Boolean(settings.delivery_enabled),
+        deliveryFee: Number(settings.delivery_fee) || 0,
+        discount,
+      });
+
+      const orderNumber = `SAV-${Date.now().toString().slice(-6)}`;
+
+      const createdOrder = await withTransaction(async (client) => {
+        let clientId: string;
+
+        const existingClient = await client.query(
+          `SELECT id FROM clients
+           WHERE restaurant_id = $1
+             AND (phone = $2 OR (email = $3 AND $3 IS NOT NULL))
+           LIMIT 1`,
+          [ctx.restaurantId, customer.phone, customer.email ?? null],
+        );
+
+        if (existingClient.rows.length > 0) {
+          clientId = existingClient.rows[0].id;
+
+          await client.query(
+            `UPDATE clients
+             SET name = $1,
+                 address = COALESCE($2, address),
+                 city = COALESCE($3, city)
+             WHERE id = $4`,
+            [customer.name, address ?? null, customer.city ?? null, clientId],
+          );
+        } else {
+          const insertClient = await client.query(
+            `INSERT INTO clients
+              (restaurant_id, user_id, name, phone, email, address, city)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
+            [
+              ctx.restaurantId,
+              ctx.user?.id ?? null,
+              customer.name,
+              customer.phone,
+              customer.email ?? null,
+              address ?? null,
+              customer.city ?? null,
+            ],
+          );
+
+          clientId = insertClient.rows[0].id;
+        }
+
+        const orderRes = await client.query(
+          `INSERT INTO orders (
+             restaurant_id, order_number, client_id, subtotal, delivery_fee, discount,
+             total, delivery_method, delivery_address, note, promo_code, status
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')
+           RETURNING *`,
+          [
+            ctx.restaurantId,
+            orderNumber,
+            clientId,
+            totals.subtotal,
+            totals.deliveryFee,
+            totals.discount,
+            totals.total,
+            deliveryMethod === "delivery" ? "delivery" : "pickup",
+            address ?? null,
+            note ?? null,
+            promoCode ?? null,
+          ],
+        );
+
+        const order = orderRes.rows[0];
+
+        for (const line of pricedLines) {
+          await client.query(
+            `INSERT INTO order_items
+              (order_id, plat_id, quantity, unit_price, subtotal)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              order.id,
+              line.platId,
+              line.quantity,
+              line.unitPrice,
+              line.subtotal,
+            ],
+          );
+
+          await client.query(
+            `UPDATE stock
+             SET quantity = GREATEST(0, quantity - $1), updated_at = now()
+             WHERE plat_id = $2 AND restaurant_id = $3`,
+            [line.quantity, line.platId, ctx.restaurantId],
+          );
+        }
+
+        return order;
+      });
+
+      const whatsappText = buildWhatsappMessage({
+        orderNumber,
+        customerName: customer.name,
+        phone: customer.phone,
+        lines: pricedLines.map((l) => ({
+          name: l.name,
+          quantity: l.quantity,
+        })),
+        subtotal: totals.subtotal,
+        deliveryFee: totals.deliveryFee,
+        total: totals.total,
+        method: deliveryMethod,
+        address,
+        note,
+        currency: settings.currency || "XOF",
+      });
+
+      const waUrl = settings.whatsapp_number
+        ? whatsappUrl(settings.whatsapp_number, whatsappText)
+        : null;
+
+      await notifyStaff({
+        restaurantId: ctx.restaurantId,
+        title: `Nouvelle commande #${orderNumber}`,
+        message: `${customer.name} a commandé pour ${totals.total} ${settings.currency || "XOF"}.`,
+        type: "order",
+      });
+
+      return sendResponse(
+        res,
+        json(
+          {
+            success: true,
+            order: createdOrder,
+            whatsappUrl: waUrl,
+            whatsappMessage: whatsappText,
+          },
+          201,
+        ),
+      );
+    }
+    // --- AUTHENTICATION: REGISTER ---
+    if (req.method === "POST" && pathname === "/api/auth/register") {
+      const body = await parseBody(req);
+      const { name, email, password } = body;
+
+      if (!name || !email || !password) {
+        throw new HttpError(400, "Nom, email et mot de passe requis.");
+      }
+
+      if (password.length < 6) {
+        throw new HttpError(
+          400,
+          "Le mot de passe doit comporter au moins 6 caractères.",
+        );
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+
+      const existing = await query<{
+        id: string;
+        email: string;
+        email_verified: boolean;
+      }>(
+        `SELECT id, email, email_verified FROM users
+         WHERE restaurant_id = $1 AND LOWER(email) = LOWER($2)`,
+        [ctx.restaurantId, normalizedEmail],
+      );
+
+      if (existing.rows.some((u) => u.email_verified)) {
+        throw new HttpError(
+          409,
+          "Un compte existe déjà avec cette adresse e-mail.",
+        );
+      }
+
+      const pendingUser = existing.rows[0];
+
+      const verificationToken = randomToken(32);
+      const tokenHash = sha256(verificationToken);
+      const tokenExpiresAt = new Date(Date.now() + 24 * 3600 * 1000);
+      const verificationCode = String(randomInt(100000, 1000000));
+      const codeExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      const issueTokens = async (
+        run: (sql: string, params: unknown[]) => Promise<unknown>,
+        userId: string,
+      ) => {
+        const insertSql = `INSERT INTO email_verification_tokens
+          (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`;
+
+        await run(insertSql, [userId, tokenHash, tokenExpiresAt]);
+        await run(insertSql, [
+          userId,
+          sha256(`code:${userId}:${verificationCode}`),
+          codeExpiresAt,
+        ]);
+      };
+
+      let userEmail: string;
+
+      if (pendingUser) {
+        userEmail = pendingUser.email;
+
+        const recent = await query(
+          `SELECT 1 FROM email_verification_tokens
+           WHERE user_id = $1
+             AND created_at > now() - interval '30 seconds'
+           LIMIT 1`,
+          [pendingUser.id],
+        );
+
+        if (recent.rows.length > 0) {
+          throw new HttpError(
+            429,
+            "Patientez quelques secondes avant de renvoyer le code.",
+          );
+        }
+
+        await query(
+          `UPDATE email_verification_tokens
+           SET used_at = now()
+           WHERE user_id = $1 AND used_at IS NULL`,
+          [pendingUser.id],
+        );
+
+        await issueTokens((sql, params) => query(sql, params), pendingUser.id);
+      } else {
+        const roleRes = await query<{ id: string }>(
+          `SELECT id FROM roles
+           WHERE (restaurant_id = $1 OR restaurant_id IS NULL)
+             AND name = 'customer'
+           ORDER BY restaurant_id NULLS LAST
+           LIMIT 1`,
+          [ctx.restaurantId],
+        );
+
+        let customerRoleId = roleRes.rows[0]?.id;
+
+        if (!customerRoleId) {
+          const insRole = await query<{ id: string }>(
+            `INSERT INTO roles (restaurant_id, name, permissions)
+             VALUES ($1, 'customer', '["account"]'::jsonb)
+             ON CONFLICT (restaurant_id, name)
+             DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [ctx.restaurantId],
+          );
+
+          customerRoleId = insRole.rows[0].id;
+        }
+
+        const pwdHash = await hashPassword(password);
+
+        try {
+          const created = await withTransaction(async (client) => {
+            const insUser = await client.query<{
+              id: string;
+              email: string;
+            }>(
+              `INSERT INTO users
+                (restaurant_id, email, password_hash, name, role_id,
+                 email_verified, is_active)
+               VALUES ($1, $2, $3, $4, $5, false, true)
+               RETURNING id, email`,
+              [
+                ctx.restaurantId,
+                normalizedEmail,
+                pwdHash,
+                String(name).trim(),
+                customerRoleId,
+              ],
+            );
+
+            const user = insUser.rows[0];
+
+            await issueTokens(
+              (sql, params) => client.query(sql, params),
+              user.id,
+            );
+
+            return user;
+          });
+
+          userEmail = created.email;
+        } catch (err) {
+          if ((err as { code?: string }).code === "23505") {
+            throw new HttpError(
+              409,
+              "Un compte existe déjà avec cette adresse e-mail.",
+            );
+          }
+
+          throw err;
+        }
+      }
+
+      const verificationLink = `${config.appUrl}/?verifyToken=${verificationToken}`;
+
+      let emailSent = false;
+
+      try {
+        await sendVerificationEmail(
+          userEmail,
+          verificationLink,
+          verificationCode,
+        );
+        emailSent = Boolean(config.smtp.host);
+      } catch (mailErr) {
+        console.warn("[mail:warning] Impossible d'envoyer l'email:", mailErr);
+      }
+
+      const showDevLink = !config.isProd && !emailSent;
+
+      const message = emailSent
+        ? `Compte créé ! Entrez le code à 6 chiffres envoyé à ${userEmail} (ou cliquez sur le lien du message). Pensez à vérifier vos spams.`
+        : showDevLink
+          ? "Compte créé ! L'envoi d'e-mails n'est pas configuré : utilisez le code ou le lien ci-dessous pour confirmer votre adresse."
+          : "Compte créé, mais l'e-mail de confirmation n'a pas pu être envoyé. Utilisez « Renvoyer le code » dans quelques secondes.";
+
+      return sendResponse(
+        res,
+        json(
+          {
+            success: true,
+            requiresVerification: true,
+            emailSent,
+            message,
+            devVerificationLink: showDevLink ? verificationLink : undefined,
+            devVerificationCode: showDevLink ? verificationCode : undefined,
+          },
+          201,
+        ),
+      );
+    }
+
+    // --- AUTHENTICATION: VERIFY EMAIL ---
+    if (req.method === "POST" && pathname === "/api/auth/verify") {
+      const body = await parseBody(req);
+      const token = String(body.token ?? "").trim();
+      const code = String(body.code ?? "").trim();
+
+      let tokenRow: { id: string; user_id: string } | undefined;
+
+      if (code) {
+        const codeEmail = String(body.email ?? "")
+          .trim()
+          .toLowerCase();
+        const codePassword = String(body.password ?? "");
+
+        if (!codeEmail || !/^\d{6}$/.test(code) || !codePassword) {
+          throw new HttpError(
+            400,
+            "E-mail, mot de passe et code à 6 chiffres requis.",
+          );
+        }
+
+        const attemptKey = `verify:${codeEmail}`;
+        const ipHash = sha256(String(ctx.ip ?? "unknown"));
+
+        if (await tooManyLoginAttempts(ctx.restaurantId, attemptKey, null)) {
+          throw new HttpError(
+            429,
+            "Trop de tentatives. Réessayez dans 15 minutes.",
+          );
+        }
+
+        const pending = await query<{
+          id: string;
+          password_hash: string | null;
+          email_verified: boolean;
+        }>(
+          `SELECT id, password_hash, email_verified FROM users
+           WHERE restaurant_id = $1 AND LOWER(email) = $2
+             AND is_active = TRUE
+           LIMIT 1`,
+          [ctx.restaurantId, codeEmail],
+        );
+
+        const candidate = pending.rows[0];
+
+        if (
+          candidate &&
+          candidate.password_hash &&
+          !candidate.email_verified &&
+          (await verifyPassword(codePassword, candidate.password_hash))
+        ) {
+          const codeRes = await query<{ id: string; user_id: string }>(
+            `SELECT id, user_id FROM email_verification_tokens
+             WHERE user_id = $1 AND token_hash = $2
+               AND expires_at > now() AND used_at IS NULL
+             LIMIT 1`,
+            [candidate.id, sha256(`code:${candidate.id}:${code}`)],
+          );
+
+          tokenRow = codeRes.rows[0];
+        }
+
+        await recordLoginAttempt(
+          ctx.restaurantId,
+          attemptKey,
+          ipHash,
+          Boolean(tokenRow),
+        );
+
+        if (!tokenRow) {
+          throw new HttpError(400, "Code incorrect ou expiré.");
+        }
+      } else {
+        if (!token) {
+          throw new HttpError(400, "Jeton de vérification requis.");
+        }
+
+        const tokenRes = await query<{ id: string; user_id: string }>(
+          `SELECT id, user_id FROM email_verification_tokens
+           WHERE token_hash = $1 AND expires_at > now() AND used_at IS NULL
+           LIMIT 1`,
+          [sha256(token)],
+        );
+
+        tokenRow = tokenRes.rows[0];
+
+        if (!tokenRow) {
+          throw new HttpError(
+            400,
+            "Le lien de confirmation est invalide ou a expiré.",
+          );
+        }
+      }
+
+      await withTransaction(async (client) => {
+        await client.query(
+          `UPDATE email_verification_tokens SET used_at = now() WHERE id = $1`,
+          [tokenRow!.id],
+        );
+
+        await client.query(
+          `UPDATE users SET email_verified = true, updated_at = now()
+           WHERE id = $1`,
+          [tokenRow!.user_id],
+        );
+      });
+
+      const userRes = await query<{
+        id: string;
+        email: string;
+        name: string;
+        role_name: string;
+      }>(
+        `SELECT u.id, u.email, u.name, r.name AS role_name
+         FROM users u
+         JOIN roles r ON r.id = u.role_id
+         WHERE u.id = $1 LIMIT 1`,
+        [tokenRow.user_id],
+      );
+
+      const user = userRes.rows[0];
+      const sessionToken = randomToken(32);
+      const sessionExpires = new Date(Date.now() + 14 * 86400 * 1000);
+
+      await query(
+        `INSERT INTO sessions (user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.id, sha256(sessionToken), sessionExpires],
+      );
+
+      const response = json({
+        success: true,
+        message: "Votre adresse e-mail a été vérifiée avec succès !",
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role_name,
+        },
+      });
+
+      response.headers.set("Set-Cookie", sessionCookieHeader(sessionToken));
+      return sendResponse(res, response);
+    }
+
+    // --- AUTHENTICATION: LOGIN ---
+    if (req.method === "POST" && pathname === "/api/auth/login") {
+      const body = await parseBody(req);
+      const { email, password } = body;
+
+      if (!email || !password) {
+        throw new HttpError(400, "Email et mot de passe requis.");
+      }
+
+      const userRes = await query(
+        `SELECT u.*, r.name AS role_name
+         FROM users u
+         JOIN roles r ON r.id = u.role_id
+         WHERE u.restaurant_id = $1
+           AND LOWER(u.email) = LOWER($2)
+           AND u.is_active = TRUE
+         LIMIT 1`,
+        [ctx.restaurantId, email.trim()],
+      );
+
+      const user = userRes.rows[0];
+
+      if (!user || !user.password_hash) {
+        throw new HttpError(401, "Identifiants invalides.");
+      }
+
+      const valid = await verifyPassword(password, user.password_hash);
+
+      if (!valid) {
+        throw new HttpError(401, "Identifiants invalides.");
+      }
+
+      if (!user.email_verified) {
+        throw new HttpError(
+          401,
+          "Compte non activé. Créez votre compte avec cette adresse pour recevoir un nouveau code de confirmation.",
+        );
+      }
+
+      const token = randomToken(32);
+      const expiresAt = new Date(Date.now() + 14 * 86400 * 1000);
+
+      await query(
+        `INSERT INTO sessions (user_id, token_hash, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.id, sha256(token), expiresAt],
+      );
+
+      await query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [
+        user.id,
+      ]);
+
+      await writeAudit({
+        restaurantId: ctx.restaurantId,
+        userId: user.id,
+        action: "login",
+        entityType: "session",
+        entityId: user.id,
+        ip: ctx.ip,
+      });
+
+      const response = json({
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role_name,
+        },
+      });
+
+      response.headers.set("Set-Cookie", sessionCookieHeader(token));
+      return sendResponse(res, response);
+    }
+
+    // --- AUTHENTICATION: LOGOUT ---
+    if (req.method === "POST" && pathname === "/api/auth/logout") {
+      if (ctx.user) {
+        await query(`DELETE FROM sessions WHERE id = $1`, [ctx.user.sessionId]);
+      }
+
+      const response = json({ success: true });
+      response.headers.set("Set-Cookie", clearSessionCookie());
+      return sendResponse(res, response);
+    }
+
+    // --- AUTHENTICATION: ME ---
+    if (req.method === "GET" && pathname === "/api/auth/me") {
+      if (!ctx.user) {
+        return sendResponse(res, json({ user: null }));
+      }
+
+      return sendResponse(res, json({ user: publicUser(ctx.user) }));
+    }
+
+    // --- ADMIN DASHBOARD STATS ---
+    if (req.method === "GET" && pathname === "/api/admin/stats") {
+      requirePermission(ctx, "statistics");
+
+      const safe = async <T>(
+        label: string,
+        fn: () => Promise<T>,
+        fallback: T,
+      ): Promise<T> => {
+        try {
+          return await fn();
+        } catch (err) {
+          console.error(`[stats:${label}]`, err);
+          return fallback;
+        }
+      };
+
+      const summary = await safe(
+        "summary",
+        async () =>
+          (
+            await query(
+              `SELECT COUNT(*) AS total_orders,
+                      COALESCE(SUM(total), 0) AS total_revenue,
+                      COUNT(*) FILTER (WHERE status = 'pending') AS pending_orders,
+                      COUNT(*) FILTER (WHERE status = 'delivered') AS delivered_orders
+               FROM orders WHERE restaurant_id = $1`,
+              [ctx.restaurantId],
+            )
+          ).rows[0],
+        {
+          total_orders: "0",
+          total_revenue: "0",
+          pending_orders: "0",
+          delivered_orders: "0",
+        },
+      );
+
+      const recentOrders = await safe(
+        "recent",
+        async () =>
+          (
+            await query(
+              `SELECT o.id, o.order_number, o.total, o.status,
+                      o.delivery_method, o.created_at,
+                      c.name AS client_name, c.phone AS client_phone
+               FROM orders o
+               LEFT JOIN clients c ON c.id = o.client_id
+               WHERE o.restaurant_id = $1
+               ORDER BY o.created_at DESC LIMIT 10`,
+              [ctx.restaurantId],
+            )
+          ).rows,
+        [] as any[],
+      );
+
+      const popularPlats = await safe(
+        "popular",
+        async () =>
+          (
+            await query(
+              `SELECT p.name, SUM(oi.quantity) AS total_sold,
+                      SUM(oi.subtotal) AS total_revenue
+               FROM order_items oi
+               JOIN plats p ON p.id = oi.plat_id
+               WHERE p.restaurant_id = $1
+               GROUP BY p.name
+               ORDER BY total_sold DESC LIMIT 5`,
+              [ctx.restaurantId],
+            )
+          ).rows,
+        [] as any[],
+      );
+
+      return sendResponse(res, json({ summary, recentOrders, popularPlats }));
+    }
+
+    // --- ADMIN: ORDERS LIST ---
+    if (req.method === "GET" && pathname === "/api/admin/orders") {
+      requirePermission(ctx, "orders");
+
+      const ordersRes = await query(
+        `SELECT o.*, c.name AS client_name,
+                c.phone AS client_phone, c.address AS client_address
+         FROM orders o
+         LEFT JOIN clients c ON c.id = o.client_id
+         WHERE o.restaurant_id = $1
+         ORDER BY o.created_at DESC`,
+        [ctx.restaurantId],
+      );
+
+      return sendResponse(res, json({ orders: ordersRes.rows }));
+    }
+
+    // --- ADMIN: UPDATE ORDER STATUS ---
+    if (req.method === "PATCH" && pathname.startsWith("/api/admin/orders/")) {
+      requirePermission(ctx, "orders");
+
+      const orderId = pathname.split("/").pop();
+      const body = await parseBody(req);
+      const { status } = body;
+
+      const validStatuses = [
+        "pending",
+        "confirmed",
+        "preparing",
+        "ready",
+        "delivering",
+        "delivered",
+        "cancelled",
+      ];
+
+      if (!validStatuses.includes(status)) {
+        throw new HttpError(400, "Statut de commande invalide.");
+      }
+
+      await query(
+        `UPDATE orders SET status = $1, updated_at = now()
+         WHERE id = $2 AND restaurant_id = $3`,
+        [status, orderId, ctx.restaurantId],
+      );
+
+      return sendResponse(res, json({ success: true, status }));
+    }
+
+    // --- ADMIN: CREATE DISH ---
+    if (req.method === "POST" && pathname === "/api/admin/plats") {
+      requirePermission(ctx, "products");
+
+      const body = await parseBody(req);
+      const {
+        categoryId,
+        name,
+        description,
+        price,
+        imageUrl,
+        isAvailable,
+        isPopular,
+      } = body;
+
+      const ins = await query(
+        `INSERT INTO plats
+          (restaurant_id, category_id, name, description, price,
+           image_url, is_available, is_popular)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [
+          ctx.restaurantId,
+          categoryId,
+          name,
+          description,
+          price,
+          imageUrl ?? null,
+          isAvailable ?? true,
+          isPopular ?? false,
+        ],
+      );
+
+      return sendResponse(res, json({ plat: ins.rows[0] }, 201));
+    }
+
+    // --- ADMIN: DELETE DISH ---
+    if (req.method === "DELETE" && pathname.startsWith("/api/admin/plats/")) {
+      requirePermission(ctx, "products");
+
+      const platId = pathname.split("/").pop();
+
+      await query(`DELETE FROM plats WHERE id = $1 AND restaurant_id = $2`, [
+        platId,
+        ctx.restaurantId,
+      ]);
+
+      return sendResponse(res, json({ success: true }));
+    }
+    // --- PAYGATE: INITIATE PAYMENT ---
+    if (req.method === "POST" && pathname === "/api/payments/initiate") {
+      const body = await parseBody(req);
+
+      const orderId = String(body.orderId ?? "");
+      const phoneNumber = String(body.phoneNumber ?? "").trim();
+      const method = String(body.method ?? "").toLowerCase();
+
+      if (!orderId || !phoneNumber) {
+        throw new HttpError(400, "Commande et téléphone obligatoires.");
+      }
+
+      if (!["flooz", "tmoney"].includes(method)) {
+        throw new HttpError(400, "Choisis Flooz ou T-Money.");
+      }
+
+      const token = process.env.PAYGATE_API_TOKEN;
+
+      if (!token) {
+        throw new HttpError(500, "Configuration PayGate manquante.");
+      }
+
+      const orderRes = await query(
+        `SELECT id, total, status
+         FROM orders
+         WHERE id = $1 AND restaurant_id = $2
+         LIMIT 1`,
+        [orderId, ctx.restaurantId],
+      );
+
+      const order = orderRes.rows[0];
+
+      if (!order) {
+        throw new HttpError(404, "Commande introuvable.");
+      }
+
+      if (order.status === "cancelled") {
+        throw new HttpError(400, "Cette commande est annulée.");
+      }
+
+      const amount = Number(order.total);
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new HttpError(400, "Montant de commande invalide.");
+      }
+
+      const paymentRes = await query(
+        `INSERT INTO payments
+           (order_id, payment_method, amount, status)
+         VALUES ($1, $2, $3, 'pending')
+         RETURNING id`,
+        [order.id, method, amount],
+      );
+
+      const paymentId = paymentRes.rows[0].id;
+
+      let gatewayResponse: Response;
+
+      try {
+        gatewayResponse = await fetch("https://paygateglobal.com/api/v1/pay", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            auth_token: token,
+            phone_number: phoneNumber,
+            amount,
+            identifier: paymentId,
+            description: `Commande Savora ${order.id}`,
+            network: method === "flooz" ? "FLOOZ" : "TMONEY",
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (err) {
+        console.error(
+          "[PayGate] Erreur réseau lors de l'initiation :",
+          err instanceof Error ? err.message : "Erreur inconnue",
+        );
+
+        // La demande a peut-être atteint PayGate malgré le délai dépassé.
+        // Ne pas relancer automatiquement cette transaction.
+        throw new HttpError(
+          502,
+          `Résultat de demande incertain. Vérifie le paiement ${paymentId} avant de réessayer.`,
+        );
+      }
+
+      // Lire la réponse une seule fois, même si elle n'est pas du JSON valide.
+      const gatewayText = await gatewayResponse.text();
+
+      let gateway: {
+        tx_reference?: string;
+        status?: number | string;
+        message?: string;
+        error?: string;
+        [key: string]: unknown;
+      };
+
+      try {
+        gateway = JSON.parse(gatewayText) as typeof gateway;
+      } catch {
+        gateway = {
+          error: "La réponse PayGate n'est pas un JSON valide.",
+          raw_response: gatewayText.slice(0, 1000),
+        };
+      }
+
+      // Diagnostic : ne jamais afficher le jeton PAYGATE_API_TOKEN.
+      if (!gatewayResponse.ok || Number(gateway.status) !== 0) {
+        console.error("[PayGate] HTTP :", gatewayResponse.status);
+        console.error("[PayGate] Réponse fournisseur :", gateway);
+
+        await query(
+          `UPDATE payments
+           SET status = 'failed', updated_at = now()
+           WHERE id = $1 AND status = 'pending'`,
+          [paymentId],
+        );
+
+        throw new HttpError(
+          502,
+          "PayGate a refusé la demande. Consulte le terminal du serveur pour connaître le détail.",
+        );
+      }
+
+      await query(
+        `UPDATE payments
+         SET provider_reference = $1,
+             status = 'processing',
+             updated_at = now()
+         WHERE id = $2`,
+        [gateway.tx_reference ?? null, paymentId],
+      );
+
+      return sendResponse(
+        res,
+        json(
+          {
+            success: true,
+            paymentId,
+            status: "processing",
+            message: "Demande envoyée. Le paiement doit encore être confirmé.",
+          },
+          201,
+        ),
+      );
+    }
+
+    // --- FALLBACK 404 ---
+    return sendResponse(
+      res,
+      json({ error: "Route API non trouvée.", path: pathname }, 404),
+    );
+  } catch (err) {
+    return sendResponse(res, errorResponse(err));
+  }
+});
+
+function sendResponse(res: http.ServerResponse, fetchRes: Response) {
+  res.statusCode = fetchRes.status;
+
+  fetchRes.headers.forEach((val, key) => {
+    res.setHeader(key, val);
+  });
+
+  fetchRes.text().then((text) => res.end(text));
+}
+
+const port = config.apiPort || 8787;
+
+if (process.env.NODE_ENV !== "test") {
+  server.listen(port, () => {
+    console.log(`[savora-api] Server running on http://localhost:${port}`);
+  });
+}
