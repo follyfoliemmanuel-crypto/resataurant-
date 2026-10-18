@@ -1,5 +1,5 @@
 import http from "node:http";
-import { randomInt } from "node:crypto";
+import { randomInt, createHash } from "node:crypto";
 import { config } from "./lib/config.js";
 import {
   buildContext,
@@ -16,6 +16,8 @@ import {
   verifyPassword,
   randomToken,
   sha256,
+  passwordIssues,
+  isEmail,
 } from "./lib/crypto.js";
 import {
   computeOrderTotals,
@@ -27,21 +29,48 @@ import { writeAudit, notifyStaff } from "./lib/audit.js";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./lib/mail.js";
 import { tooManyLoginAttempts, recordLoginAttempt } from "./lib/rate-limit.js";
 
+const MAX_BODY_SIZE = 1024 * 1024; // 1 Mo max body
+
 async function parseBody(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (chunk) => {
+    let size = 0;
+
+    const onData = (chunk: Buffer | string) => {
+      size += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        cleanup();
+        req.destroy();
+        reject(new HttpError(413, "Corps de requête trop volumineux (max 1 Mo)."));
+        return;
+      }
       data += chunk;
-    });
-    req.on("end", () => {
+    };
+
+    const onEnd = () => {
+      cleanup();
       if (!data) return resolve({});
       try {
         resolve(JSON.parse(data));
       } catch {
         reject(new HttpError(400, "Corps JSON invalide."));
       }
-    });
-    req.on("error", reject);
+    };
+
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
+
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+    };
+
+    req.on("data", onData);
+    req.on("end", onEnd);
+    req.on("error", onError);
   });
 }
 
@@ -67,7 +96,21 @@ function toFetchRequest(req: http.IncomingMessage): Request {
 // Clients connectés au flux temps réel (/api/events) : ils reçoivent un simple signal « ça a changé »
 const sseClients = new Set<http.ServerResponse>();
 function broadcastChange() {
-  for (const client of sseClients) client.write(`event: change\ndata: ${Date.now()}\n\n`);
+  const deadClients: http.ServerResponse[] = [];
+  for (const client of sseClients) {
+    if (client.writableEnded || client.destroyed) {
+      deadClients.push(client);
+      continue;
+    }
+    try {
+      client.write(`event: change\ndata: ${Date.now()}\n\n`);
+    } catch {
+      deadClients.push(client);
+    }
+  }
+  for (const dead of deadClients) {
+    sseClients.delete(dead);
+  }
 }
 
 export const server = http.createServer(async (req, res) => {
@@ -90,6 +133,9 @@ export const server = http.createServer(async (req, res) => {
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, Cookie",
   );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
 
   if (req.method === "OPTIONS") {
     res.writeHead(requestOrigin && !allowedOrigins.has(requestOrigin) ? 403 : 204);
@@ -107,16 +153,35 @@ export const server = http.createServer(async (req, res) => {
     });
     res.write("retry: 3000\n\n");
     sseClients.add(res);
-    const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
-    req.on("close", () => {
+
+    const cleanup = () => {
       clearInterval(ping);
       sseClients.delete(res);
-    });
+      req.off("close", cleanup);
+      res.off("close", cleanup);
+      res.off("error", cleanup);
+    };
+
+    const ping = setInterval(() => {
+      if (res.writableEnded || res.destroyed) {
+        cleanup();
+        return;
+      }
+      try {
+        res.write(": ping\n\n");
+      } catch {
+        cleanup();
+      }
+    }, 25_000);
+
+    req.once("close", cleanup);
+    res.once("close", cleanup);
+    res.once("error", cleanup);
     return;
   }
   // Toute modification réussie (commande, plat, promo, statut...) prévient les écrans ouverts
   if (req.method && !["GET", "HEAD"].includes(req.method)) {
-    res.on("finish", () => {
+    res.once("finish", () => {
       if (res.statusCode < 400) broadcastChange();
     });
   }
@@ -622,14 +687,15 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Nom, email et mot de passe requis.");
       }
 
-      if (password.length < 6) {
-        throw new HttpError(
-          400,
-          "Le mot de passe doit comporter au moins 6 caractères.",
-        );
+      const normalizedEmail = String(email).trim().toLowerCase();
+      if (!isEmail(normalizedEmail)) {
+        throw new HttpError(400, "Adresse e-mail invalide.");
       }
 
-      const normalizedEmail = String(email).trim().toLowerCase();
+      const issues = passwordIssues(String(password));
+      if (issues.length > 0) {
+        throw new HttpError(400, issues[0]);
+      }
 
       const existing = await query<{
         id: string;
@@ -1199,8 +1265,9 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Jeton et nouveau mot de passe requis.");
       }
 
-      if (newPassword.length < 6) {
-        throw new HttpError(400, "Le mot de passe doit comporter au moins 6 caractères.");
+      const issues = passwordIssues(newPassword);
+      if (issues.length > 0) {
+        throw new HttpError(400, issues[0]);
       }
 
       const ipHash = ctx.ip ? sha256(ctx.ip) : null;
@@ -1262,7 +1329,18 @@ export const server = http.createServer(async (req, res) => {
       }
 
       const state = randomToken(32);
+      const codeVerifier = randomToken(48);
+      const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+
       const stateCookie = cookie("savora_oauth_state", state, {
+        httpOnly: true,
+        secure: config.isProd,
+        sameSite: "Lax",
+        maxAge: 600,
+        path: "/",
+      });
+
+      const verifierCookie = cookie("savora_oauth_verifier", codeVerifier, {
         httpOnly: true,
         secure: config.isProd,
         sameSite: "Lax",
@@ -1276,6 +1354,8 @@ export const server = http.createServer(async (req, res) => {
         response_type: "code",
         scope: "openid email profile",
         state,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
         prompt: "select_account",
       });
 
@@ -1286,18 +1366,33 @@ export const server = http.createServer(async (req, res) => {
           Location: googleAuthUrl,
         },
       });
-      response.headers.set("Set-Cookie", stateCookie);
+      response.headers.append("Set-Cookie", stateCookie);
+      response.headers.append("Set-Cookie", verifierCookie);
       return sendResponse(res, response);
     }
 
     // --- AUTHENTICATION: GOOGLE OAUTH CALLBACK ---
     if (req.method === "GET" && pathname === "/api/auth/google/callback") {
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      const error = url.searchParams.get("error");
+      const queryMap = Object.fromEntries(url.searchParams);
+      const rawCode = typeof queryMap.code === "string" ? queryMap.code : null;
+      const rawState = typeof queryMap.state === "string" ? queryMap.state : null;
+      const rawError = typeof queryMap.error === "string" ? queryMap.error : null;
+
+      const code = (rawCode && rawCode.length >= 10 && rawCode.length <= 512 && /^[\w\-./]+$/.test(rawCode))
+        ? rawCode
+        : null;
+
+      const state = (rawState && rawState.length >= 20 && rawState.length <= 256 && /^[\w\-]+$/.test(rawState))
+        ? rawState
+        : null;
+
+      const error = (rawError && rawError.length <= 128 && /^[\w\- _]+$/.test(rawError))
+        ? rawError
+        : null;
 
       const cookies = parseCookies(fetchReq.headers.get("cookie"));
       const savedState = cookies["savora_oauth_state"];
+      const savedVerifier = cookies["savora_oauth_verifier"];
 
       const clearStateCookie = cookie("savora_oauth_state", "", {
         httpOnly: true,
@@ -1307,23 +1402,31 @@ export const server = http.createServer(async (req, res) => {
         path: "/",
       });
 
-      if (error || !code) {
-        const errorMsg = encodeURIComponent(error || "Connexion annulée");
+      const clearVerifierCookie = cookie("savora_oauth_verifier", "", {
+        httpOnly: true,
+        secure: config.isProd,
+        sameSite: "Lax",
+        maxAge: 0,
+        path: "/",
+      });
+
+      const sendOAuthRedirect = (redirectUrl: string) => {
         const redirectRes = new Response(null, {
           status: 302,
-          headers: { Location: `${config.appUrl}/?authError=${errorMsg}` },
+          headers: { Location: redirectUrl },
         });
-        redirectRes.headers.set("Set-Cookie", clearStateCookie);
+        redirectRes.headers.append("Set-Cookie", clearStateCookie);
+        redirectRes.headers.append("Set-Cookie", clearVerifierCookie);
         return sendResponse(res, redirectRes);
+      };
+
+      if (error || !code) {
+        const errorMsg = encodeURIComponent(error || "Connexion annulée");
+        return sendOAuthRedirect(`${config.appUrl}/?authError=${errorMsg}`);
       }
 
       if (!state || !savedState || state !== savedState) {
-        const redirectRes = new Response(null, {
-          status: 302,
-          headers: { Location: `${config.appUrl}/?authError=session_invalide` },
-        });
-        redirectRes.headers.set("Set-Cookie", clearStateCookie);
-        return sendResponse(res, redirectRes);
+        return sendOAuthRedirect(`${config.appUrl}/?authError=session_invalide`);
       }
 
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -1335,16 +1438,12 @@ export const server = http.createServer(async (req, res) => {
           client_secret: config.googleClientSecret,
           redirect_uri: config.googleRedirectUri,
           grant_type: "authorization_code",
+          code_verifier: savedVerifier || "",
         }).toString(),
       });
 
       if (!tokenRes.ok) {
-        const redirectRes = new Response(null, {
-          status: 302,
-          headers: { Location: `${config.appUrl}/?authError=echange_jeton_echoue` },
-        });
-        redirectRes.headers.set("Set-Cookie", clearStateCookie);
-        return sendResponse(res, redirectRes);
+        return sendOAuthRedirect(`${config.appUrl}/?authError=echange_jeton_echoue`);
       }
 
       const tokenData = (await tokenRes.json()) as { access_token?: string; id_token?: string };
@@ -1355,12 +1454,7 @@ export const server = http.createServer(async (req, res) => {
       });
 
       if (!userInfoRes.ok) {
-        const redirectRes = new Response(null, {
-          status: 302,
-          headers: { Location: `${config.appUrl}/?authError=profil_introuvable` },
-        });
-        redirectRes.headers.set("Set-Cookie", clearStateCookie);
-        return sendResponse(res, redirectRes);
+        return sendOAuthRedirect(`${config.appUrl}/?authError=profil_introuvable`);
       }
 
       const googleUser = (await userInfoRes.json()) as {
@@ -1378,12 +1472,7 @@ export const server = http.createServer(async (req, res) => {
       const avatarUrl = googleUser.picture ?? null;
 
       if (!googleId || !googleEmail || !emailVerified) {
-        const redirectRes = new Response(null, {
-          status: 302,
-          headers: { Location: `${config.appUrl}/?authError=email_non_verifie_par_google` },
-        });
-        redirectRes.headers.set("Set-Cookie", clearStateCookie);
-        return sendResponse(res, redirectRes);
+        return sendOAuthRedirect(`${config.appUrl}/?authError=email_non_verifie_par_google`);
       }
 
       let user = (
@@ -1458,6 +1547,8 @@ export const server = http.createServer(async (req, res) => {
         headers: { Location: `${config.appUrl}/?authSuccess=1` },
       });
       redirectRes.headers.set("Set-Cookie", sessionCookieHeader(sessionToken));
+      redirectRes.headers.append("Set-Cookie", clearStateCookie);
+      redirectRes.headers.append("Set-Cookie", clearVerifierCookie);
       return sendResponse(res, redirectRes);
     }
 
@@ -1919,6 +2010,184 @@ export const server = http.createServer(async (req, res) => {
       });
 
       return sendResponse(res, json({ success: true }));
+    }
+
+    // --- PAYGATE: INITIATE PAYMENT ---
+    if (req.method === "POST" && pathname === "/api/payments/initiate") {
+      const body = await parseBody(req);
+      const orderId = String(body.orderId ?? "").trim();
+      const phoneNumber = String(body.phoneNumber ?? "").trim();
+      const method = String(body.method ?? "").toLowerCase().trim();
+
+      if (!orderId || !phoneNumber) {
+        throw new HttpError(400, "Commande et numéro de téléphone obligatoires.");
+      }
+
+      if (!["flooz", "tmoney"].includes(method)) {
+        throw new HttpError(400, "Méthode de paiement invalide (choisissez Flooz ou T-Money).");
+      }
+
+      if (!/^\+?[0-9\s-]{8,20}$/.test(phoneNumber)) {
+        throw new HttpError(400, "Numéro de téléphone invalide.");
+      }
+
+      const orderRes = await query<{ id: string; total: string; status: string }>(
+        `SELECT id, total, status FROM orders
+         WHERE id = $1 AND restaurant_id = $2
+         LIMIT 1`,
+        [orderId, ctx.restaurantId],
+      );
+
+      const order = orderRes.rows[0];
+      if (!order) {
+        throw new HttpError(404, "Commande introuvable.");
+      }
+
+      if (order.status === "cancelled") {
+        throw new HttpError(400, "Cette commande a été annulée.");
+      }
+
+      const amount = Number(order.total);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new HttpError(400, "Montant de commande invalide.");
+      }
+
+      const paymentRes = await query<{ id: string }>(
+        `INSERT INTO payments (order_id, payment_method, amount, status)
+         VALUES ($1, $2, $3, 'pending')
+         RETURNING id`,
+        [order.id, method, amount],
+      );
+
+      const paymentId = paymentRes.rows[0].id;
+      const token = process.env.PAYGATE_API_TOKEN;
+
+      if (!token) {
+        // En mode dev sans token PayGate configuré, renvoyer une confirmation de test sécurisée
+        if (!config.isProd) {
+          return sendResponse(
+            res,
+            json(
+              {
+                success: true,
+                paymentId,
+                status: "pending",
+                message: "Paiement initié en mode développement (jeton PayGate non configuré).",
+              },
+              201,
+            ),
+          );
+        }
+        throw new HttpError(503, "Le service de paiement PayGate n'est pas encore configuré.");
+      }
+
+      let gatewayResponse: Response;
+      try {
+        gatewayResponse = await fetch("https://paygateglobal.com/api/v1/pay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            auth_token: token,
+            phone_number: phoneNumber.replace(/[\s-]/g, ""),
+            amount,
+            identifier: paymentId,
+            description: `Commande Savora #${order.id.slice(0, 8)}`,
+            network: method === "flooz" ? "FLOOZ" : "TMONEY",
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (err) {
+        console.error(
+          "[PayGate] Erreur réseau lors de l'initiation :",
+          err instanceof Error ? err.message : "Erreur de connexion",
+        );
+        throw new HttpError(
+          502,
+          `Résultat de demande incertain. Vérifiez le paiement ${paymentId} avant de réessayer.`,
+        );
+      }
+
+      const gatewayText = await gatewayResponse.text();
+      let gateway: { tx_reference?: string; status?: number | string; message?: string };
+      try {
+        gateway = JSON.parse(gatewayText);
+      } catch {
+        gateway = { status: -1 };
+      }
+
+      if (!gatewayResponse.ok || Number(gateway.status) !== 0) {
+        await query(
+          `UPDATE payments SET status = 'failed', updated_at = now()
+           WHERE id = $1 AND status = 'pending'`,
+          [paymentId],
+        );
+        throw new HttpError(502, "PayGate a refusé la demande de paiement.");
+      }
+
+      await query(
+        `UPDATE payments SET provider_reference = $1, status = 'processing', updated_at = now()
+         WHERE id = $2`,
+        [gateway.tx_reference ?? null, paymentId],
+      );
+
+      return sendResponse(
+        res,
+        json(
+          {
+            success: true,
+            paymentId,
+            status: "processing",
+            message: "Demande envoyée. Le paiement est en attente de confirmation sur le téléphone.",
+          },
+          201,
+        ),
+      );
+    }
+
+    // --- PAYGATE: PAYMENT STATUS UPDATE / WEBHOOK ---
+    if (req.method === "POST" && pathname === "/api/payments/status") {
+      const body = await parseBody(req);
+      const paymentId = String(body.paymentId ?? "").trim();
+      const status = String(body.status ?? "").toLowerCase().trim();
+      const txReference = body.txReference ? String(body.txReference).trim() : null;
+
+      if (!paymentId || !status) {
+        throw new HttpError(400, "Identifiant de paiement et statut obligatoires.");
+      }
+
+      const validStatuses = ["pending", "processing", "paid", "failed", "cancelled"];
+      if (!validStatuses.includes(status)) {
+        throw new HttpError(400, "Statut de paiement invalide.");
+      }
+
+      await withTransaction(async (client) => {
+        const locked = await client.query<{ id: string; order_id: string; status: string }>(
+          `SELECT id, order_id, status FROM payments WHERE id = $1 FOR UPDATE`,
+          [paymentId],
+        );
+        const current = locked.rows[0];
+        if (!current) {
+          throw new HttpError(404, "Paiement introuvable.");
+        }
+
+        // Ne jamais rétrograder un paiement déjà validé
+        const finalStatus = current.status === "paid" ? "paid" : status;
+        await client.query(
+          `UPDATE payments SET status = $1, provider_reference = COALESCE($2, provider_reference), updated_at = now()
+           WHERE id = $3`,
+          [finalStatus, txReference, paymentId],
+        );
+
+        if (finalStatus === "paid") {
+          await client.query(
+            `UPDATE orders SET status = 'confirmed', updated_at = now()
+             WHERE id = $1 AND restaurant_id = $2 AND status = 'pending'`,
+            [current.order_id, ctx.restaurantId],
+          );
+        }
+      });
+
+      return sendResponse(res, json({ success: true, paymentId, status }));
     }
 
     // --- FALLBACK 404 ---

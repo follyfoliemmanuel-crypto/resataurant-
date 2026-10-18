@@ -9,7 +9,7 @@ import {
 } from "../server/lib/crypto.js";
 
 describe("Authentication & Crypto Security", () => {
-  test("passwordIssues enforces password policy (10+ chars, uppercase, lowercase, number)", () => {
+  test("passwordIssues enforces password policy (12+ chars, uppercase, lowercase, number)", () => {
     assert.ok(passwordIssues("short").length > 0);
     assert.ok(passwordIssues("nouppercase123").length > 0);
     assert.ok(passwordIssues("NOLOWERCASE123").length > 0);

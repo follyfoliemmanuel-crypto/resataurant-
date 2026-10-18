@@ -115,7 +115,15 @@ export async function login(email: string, password: string): Promise<{ success:
   }
 }
 
-export async function register(name: string, email: string, password: string): Promise<{ 
+export function validatePassword(password: string): string[] {
+  const issues: string[] = [];
+  if (!password || password.length < 12) issues.push('Le mot de passe doit comporter au moins 12 caractères.');
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) issues.push('Mélangez majuscules et minuscules.');
+  if (!/[0-9]/.test(password)) issues.push('Ajoutez au moins un chiffre.');
+  return issues;
+}
+
+export async function register(name: string, email: string, pwd: string): Promise<{ 
   success: boolean; 
   requiresVerification?: boolean;
   message?: string;
@@ -124,11 +132,14 @@ export async function register(name: string, email: string, password: string): P
   user?: AuthUser; 
   error?: string 
 }> {
+  if (!pwd || pwd.length < 12 || !/[A-Z]/.test(pwd) || !/[a-z]/.test(pwd) || !/[0-9]/.test(pwd)) {
+    return { success: false, error: 'Le mot de passe doit comporter au moins 12 caractères (majuscule, minuscule, chiffre).' };
+  }
   try {
     const res = await fetch(`${BASE_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ name, email, password: pwd }),
     });
     const data = await res.json();
     if (!res.ok) {

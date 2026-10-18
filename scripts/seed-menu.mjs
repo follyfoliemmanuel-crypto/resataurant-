@@ -3,9 +3,10 @@ import fs from 'node:fs';
 
 const env = fs.readFileSync('.env', 'utf8');
 const match = env.match(/DATABASE_URL=(.*)/);
+const isLocal = match[1].includes("localhost") || match[1].includes("127.0.0.1");
 const client = new pg.Client({
   connectionString: match[1].trim(),
-  ssl: { rejectUnauthorized: false }
+  ssl: isLocal ? false : { rejectUnauthorized: true },
 });
 
 await client.connect();

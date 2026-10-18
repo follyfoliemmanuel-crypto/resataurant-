@@ -144,8 +144,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     e.preventDefault();
     setAuthError('');
     setRegisterSuccessMsg(null);
+    if (!password || password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+      setAuthError('Le mot de passe doit comporter au moins 12 caractères, avec majuscule, minuscule et chiffre.');
+      return;
+    }
     setIsAuthLoading(true);
-    const res = await register(name, email, password);
+    const accountPassword = password;
+    const res = await registerUser(name, email, accountPassword);
     setIsAuthLoading(false);
     if (res.success) {
       if (res.requiresVerification) {

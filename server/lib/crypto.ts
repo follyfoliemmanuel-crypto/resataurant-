@@ -44,7 +44,7 @@ export async function verifyPassword(password: string, stored: string) {
 
 export function passwordIssues(password: string) {
   const issues: string[] = [];
-  if (password.length < 10) issues.push("Le mot de passe doit contenir au moins 10 caractères.");
+  if (password.length < 12) issues.push("Le mot de passe doit contenir au moins 12 caractères.");
   if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) issues.push("Mélangez majuscules et minuscules.");
   if (!/[0-9]/.test(password)) issues.push("Ajoutez au moins un chiffre.");
   return issues;

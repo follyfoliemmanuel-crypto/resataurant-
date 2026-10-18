@@ -10,15 +10,23 @@ function hashPassword(password) {
 
 const env = fs.readFileSync('.env', 'utf8');
 const match = env.match(/DATABASE_URL=(.*)/);
+const isLocal = match[1].includes("localhost") || match[1].includes("127.0.0.1");
 const client = new pg.Client({
   connectionString: match[1].trim(),
-  ssl: { rejectUnauthorized: false }
+  ssl: isLocal ? false : { rejectUnauthorized: true },
 });
 
 await client.connect();
 
-const targetEmail = process.argv[2] || 'foloyfoiliemmanuel@gmail.com';
-const newPlainPassword = process.argv[3] || 'SavoraOwner!2026';
+const targetEmail = process.argv[2];
+const newPlainPassword = process.argv[3];
+
+if (!targetEmail || !newPlainPassword) {
+  console.error("Arguments manquants : identifiant et valeur requis.");
+  await client.end();
+  process.exit(1);
+}
+
 const hashed = hashPassword(newPlainPassword);
 
 const res = await client.query(
@@ -28,9 +36,9 @@ const res = await client.query(
 
 if (res.rows.length > 0) {
   console.log(`Mot de passe réinitialisé avec succès pour: ${res.rows[0].email}`);
-  console.log(`Nouveau mot de passe: ${newPlainPassword}`);
+  console.log("Mise à jour effectuée avec succès (mot de passe masqué).");
 } else {
-  console.error(`Utilisateur ${targetEmail} non trouvé.`);
+  console.error(`Utilisateur non trouvé.`);
 }
 
 await client.end();

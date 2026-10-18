@@ -170,7 +170,7 @@ export function App() {
     setOrderConfirmation(data);
     void loadData(true); // stocks / disponibilités à jour après la commande
     if (data.whatsappUrl) {
-      window.open(data.whatsappUrl, '_blank');
+      window.open(data.whatsappUrl, '_blank', 'noopener,noreferrer');
     }
   };
 

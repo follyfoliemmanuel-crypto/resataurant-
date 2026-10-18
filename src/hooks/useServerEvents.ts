@@ -15,12 +15,14 @@ export function useServerEvents(onChange: () => void, enabled = true) {
     if (!enabled || typeof EventSource === 'undefined') return;
     let timer: number | undefined;
     const es = new EventSource('/api/events');
-    es.addEventListener('change', () => {
+    const handleChange = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => ref.current(), 150);
-    });
+    };
+    es.addEventListener('change', handleChange);
     return () => {
       window.clearTimeout(timer);
+      es.removeEventListener('change', handleChange);
       es.close();
     };
   }, [enabled]);
