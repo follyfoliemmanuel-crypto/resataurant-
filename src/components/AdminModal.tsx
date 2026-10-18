@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { useServerEvents } from '../hooks/useServerEvents';
-import { 
-  X, LogOut, TrendingUp, ShoppingBag, 
+import {
+  X, LogOut, TrendingUp, ShoppingBag,
   Plus, AlertCircle, ImageIcon, Utensils, UserCheck,
   Tag, Search, Edit2, Trash2, Check, ArrowLeft, KeyRound
 } from 'lucide-react';
 import type { AuthUser, DashboardStats, Order, Category, Plat, Promotion } from '../types';
-import { 
-  login, register, verifyCode, logout, fetchAdminStats, fetchAdminOrders, 
+import {
+  login, register, verifyCode, logout, fetchAdminStats, fetchAdminOrders,
   updateOrderStatus, createPlat, deletePlat,
   requestPasswordReset, resetPassword, resendVerification,
   fetchAdminPromotions, createAdminPromotion, updateAdminPromotion, deleteAdminPromotion
@@ -41,7 +41,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 }) => {
   const [tab, setTab] = useState<'stats' | 'orders' | 'menu' | 'promos'>('stats');
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot' | 'reset'>(initialMode);
-  
+
   // Auth fields
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -150,7 +150,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     }
     setIsAuthLoading(true);
     const accountPassword = password;
-    const res = await registerUser(name, email, accountPassword);
+    const res = await register(name, email, accountPassword);
     setIsAuthLoading(false);
     if (res.success) {
       if (res.requiresVerification) {
@@ -193,10 +193,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     const res = await resendVerification(email);
     setIsAuthLoading(false);
     if (res.success) {
-      setRegisterSuccessMsg({ 
-        msg: res.message || 'Nouveau code envoyé.', 
-        devLink: res.devVerificationLink, 
-        devCode: res.devVerificationCode 
+      setRegisterSuccessMsg({
+        msg: res.message || 'Nouveau code envoyé.',
+        devLink: res.devVerificationLink,
+        devCode: res.devVerificationCode
       });
       setVerifyCodeInput('');
     } else {
@@ -372,7 +372,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const formatMoney = (val: string | number) =>
     new Intl.NumberFormat('fr-FR').format(Number(val));
 
-  const filteredPromos = promotions.filter(p => 
+  const filteredPromos = promotions.filter(p =>
     p.code.toLowerCase().includes(promoSearch.toLowerCase()) ||
     p.name.toLowerCase().includes(promoSearch.toLowerCase())
   );
@@ -563,22 +563,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   <button
                     type="button"
                     onClick={() => { setAuthMode('login'); setAuthError(''); }}
-                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                      authMode === 'login'
-                        ? 'bg-white text-stone-900 shadow-sm'
-                        : 'text-stone-500 hover:text-stone-900'
-                    }`}
+                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${authMode === 'login'
+                      ? 'bg-white text-stone-900 shadow-sm'
+                      : 'text-stone-500 hover:text-stone-900'
+                      }`}
                   >
                     Se connecter
                   </button>
                   <button
                     type="button"
                     onClick={() => { setAuthMode('register'); setAuthError(''); setRegisterSuccessMsg(null); }}
-                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                      authMode === 'register'
-                        ? 'bg-white text-stone-900 shadow-sm'
-                        : 'text-stone-500 hover:text-stone-900'
-                    }`}
+                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${authMode === 'register'
+                      ? 'bg-white text-stone-900 shadow-sm'
+                      : 'text-stone-500 hover:text-stone-900'
+                      }`}
                   >
                     S'inscrire
                   </button>
@@ -791,44 +789,40 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             <div className="flex border-b border-stone-200 bg-stone-50 px-6 gap-2 overflow-x-auto">
               <button
                 onClick={() => setTab('stats')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                  tab === 'stats'
-                    ? 'border-orange-600 text-orange-600'
-                    : 'border-transparent text-stone-500 hover:text-stone-900'
-                }`}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'stats'
+                  ? 'border-orange-600 text-orange-600'
+                  : 'border-transparent text-stone-500 hover:text-stone-900'
+                  }`}
               >
                 <TrendingUp className="w-4 h-4" />
                 <span>Statistiques</span>
               </button>
               <button
                 onClick={() => setTab('orders')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                  tab === 'orders'
-                    ? 'border-orange-600 text-orange-600'
-                    : 'border-transparent text-stone-500 hover:text-stone-900'
-                }`}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'orders'
+                  ? 'border-orange-600 text-orange-600'
+                  : 'border-transparent text-stone-500 hover:text-stone-900'
+                  }`}
               >
                 <ShoppingBag className="w-4 h-4" />
                 <span>Commandes ({orders.length})</span>
               </button>
               <button
                 onClick={() => setTab('menu')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                  tab === 'menu'
-                    ? 'border-orange-600 text-orange-600'
-                    : 'border-transparent text-stone-500 hover:text-stone-900'
-                }`}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'menu'
+                  ? 'border-orange-600 text-orange-600'
+                  : 'border-transparent text-stone-500 hover:text-stone-900'
+                  }`}
               >
                 <Utensils className="w-4 h-4" />
                 <span>Gestion de la carte & Photos</span>
               </button>
               <button
                 onClick={() => setTab('promos')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-                  tab === 'promos'
-                    ? 'border-orange-600 text-orange-600'
-                    : 'border-transparent text-stone-500 hover:text-stone-900'
-                }`}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'promos'
+                  ? 'border-orange-600 text-orange-600'
+                  : 'border-transparent text-stone-500 hover:text-stone-900'
+                  }`}
               >
                 <Tag className="w-4 h-4" />
                 <span>Codes promo ({promotions.length})</span>
@@ -905,14 +899,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
-                              order.status === 'confirmed' ? 'bg-amber-100 text-amber-800' :
+                            <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${order.status === 'confirmed' ? 'bg-amber-100 text-amber-800' :
                               order.status === 'preparing' ? 'bg-blue-100 text-blue-800' :
-                              order.status === 'ready' ? 'bg-purple-100 text-purple-800' :
-                              order.status === 'delivered' ? 'bg-emerald-100 text-emerald-800' :
-                              order.status === 'cancelled' ? 'bg-rose-100 text-rose-800' :
-                              'bg-stone-100 text-stone-700'
-                            }`}>
+                                order.status === 'ready' ? 'bg-purple-100 text-purple-800' :
+                                  order.status === 'delivered' ? 'bg-emerald-100 text-emerald-800' :
+                                    order.status === 'cancelled' ? 'bg-rose-100 text-rose-800' :
+                                      'bg-stone-100 text-stone-700'
+                              }`}>
                               {order.status}
                             </span>
 
@@ -1037,9 +1030,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         return (
                           <div
                             key={promo.id}
-                            className={`p-4 rounded-2xl border bg-white shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                              !promo.is_active ? 'opacity-70 bg-stone-50/50' : ''
-                            }`}
+                            className={`p-4 rounded-2xl border bg-white shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4 ${!promo.is_active ? 'opacity-70 bg-stone-50/50' : ''
+                              }`}
                           >
                             <div className="space-y-1">
                               <div className="flex items-center gap-3">
@@ -1072,11 +1064,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleTogglePromoActive(promo)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer border transition-colors ${
-                                  promo.is_active
-                                    ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                                }`}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer border transition-colors ${promo.is_active
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                                  }`}
                               >
                                 {promo.is_active ? 'Désactiver' : 'Activer'}
                               </button>
