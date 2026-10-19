@@ -2210,10 +2210,13 @@ function sendResponse(res: http.ServerResponse, fetchRes: Response) {
   fetchRes.text().then((text) => res.end(text));
 }
 
+
 const port = config.apiPort || 8787;
 
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
   server.listen(port, () => {
     console.log(`[savora-api] Server running on http://localhost:${port}`);
   });
+}
+
 }
