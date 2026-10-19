@@ -1,29 +1,16 @@
-import { useEffect, useRef } from 'react';
+
+import { useEffect } from 'react';
 
 /**
- * Écoute les signaux du serveur (/api/events) : dès qu'une commande, un plat,
- * une promotion... change, `onChange` est appelé aussitôt (mise à jour instantanée).
- * Le rafraîchissement périodique (usePolling) reste en secours si la connexion tombe.
+ * Le rafraîchissement automatique est assuré par usePolling.
+ * On désactive le flux SSE permanent pour éviter les connexions longues.
  */
-export function useServerEvents(onChange: () => void, enabled = true) {
-  const ref = useRef(onChange);
+export function useServerEvents(
+  _onChange: () => void,
+  _enabled = true
+) {
   useEffect(() => {
-    ref.current = onChange;
-  });
-
-  useEffect(() => {
-    if (!enabled || typeof EventSource === 'undefined') return;
-    let timer: number | undefined;
-    const es = new EventSource('/api/events');
-    const handleChange = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => ref.current(), 150);
-    };
-    es.addEventListener('change', handleChange);
-    return () => {
-      window.clearTimeout(timer);
-      es.removeEventListener('change', handleChange);
-      es.close();
-    };
-  }, [enabled]);
+    // Les données restent actualisées via usePolling.
+    return undefined;
+  }, []);
 }
