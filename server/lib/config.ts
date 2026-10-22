@@ -22,11 +22,38 @@ function loadDotEnv(file: string) {
 }
 
 const nodeEnv = process.env.NODE_ENV ?? "development";
-const appUrl = (process.env.APP_URL ?? "http://localhost:5173").replace(/\/+$/, "");
+
+// Vercel expose l'URL publique du projet via ces variables (sans protocole).
+// On s'en sert comme repli pour que les redirections OAuth et e-mail
+// fonctionnent même si APP_URL n'est pas encore configurée.
+const vercelPublicUrl =
+  process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL ?? "";
+const fallbackAppUrl = vercelPublicUrl
+  ? `https://${vercelPublicUrl.replace(/^https?:\/\//, "")}`
+  : "http://localhost:5173";
+
+const appUrl = (process.env.APP_URL?.trim() || fallbackAppUrl).replace(/\/+$/, "");
+
+// NODE_ENV n'est pas garanti sur les fonctions Vercel : la présence de VERCEL
+// est le signal fiable pour activer les cookies Secure et les contrôles prod.
+const isProd = nodeEnv === "production" || Boolean(process.env.VERCEL);
+
+/**
+ * URI de redirection OAuth. En production on ignore une valeur locale
+ * (localhost) héritée du .env local, qui ferait échouer Google avec
+ * « redirect_uri_mismatch ».
+ */
+function resolveGoogleRedirectUri() {
+  const configured = (process.env.GOOGLE_REDIRECT_URI ?? "").trim();
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(configured);
+  if (configured && !(isProd && isLocal)) return configured;
+  if (isProd) return `${appUrl}/api/auth/google/callback`;
+  return "http://localhost:8787/api/auth/google/callback";
+}
 
 export const config = {
   nodeEnv,
-  isProd: nodeEnv === "production",
+  isProd,
   appUrl,
   // PORT est fourni par les plateformes d'hébergement (Render, Railway, Fly…).
   apiPort: Number(process.env.PORT ?? process.env.API_PORT ?? 8787),
@@ -34,7 +61,7 @@ export const config = {
   appSecret: process.env.APP_SECRET ?? "dev-only-change-me-please-use-32-bytes",
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-  googleRedirectUri: process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:8787/api/auth/google/callback",
+  googleRedirectUri: resolveGoogleRedirectUri(),
   defaultRestaurantSlug: process.env.DEFAULT_RESTAURANT_SLUG ?? "maison-lumen",
   smtp: {
     host: process.env.SMTP_HOST ?? "",
@@ -70,6 +97,15 @@ export function productionConfigIssues() {
   }
   if (!config.resendApiKey && !config.smtp.host) {
     issues.push("Aucun service e-mail configuré (RESEND_API_KEY ou SMTP).");
+  }
+  if (
+    config.googleClientId &&
+    config.googleClientSecret &&
+    !/^https:\/\//i.test(config.googleRedirectUri)
+  ) {
+    issues.push(
+      "GOOGLE_REDIRECT_URI doit être une URL HTTPS (ex. https://votre-app.vercel.app/api/auth/google/callback).",
+    );
   }
   return config.isProd ? issues : [];
 }

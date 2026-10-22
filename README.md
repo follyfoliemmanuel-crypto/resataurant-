@@ -62,8 +62,15 @@ définis, sinon `/api/health` répond `503` avec `config: "incomplete"`.
 4. Déployer. Le front est servi depuis `dist/`, et `api/[...path].ts` expose toutes
    les routes `/api/*` dans une fonction serverless (aucun port ouvert).
 5. Vérifier `https://<projet>.vercel.app/api/health` → `200 {"status":"ok","db":"ok","config":"ok"}`.
-6. Pour Google OAuth, ajouter `https://<projet>.vercel.app/api/auth/google/callback`
-   dans la console Google et dans `GOOGLE_REDIRECT_URI`.
+6. Pour Google OAuth :
+   - `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` suffisent. `GOOGLE_REDIRECT_URI`
+     peut rester vide : l'URI est déduite de `APP_URL` (ou du domaine Vercel).
+   - Dans Google Cloud Console → **APIs & Services → Credentials → OAuth client**,
+     ajouter dans **Authorized redirect URIs** :
+     `https://<projet>.vercel.app/api/auth/google/callback`
+     (et `http://localhost:8787/api/auth/google/callback` pour le développement).
+   - Si l'écran de consentement est en mode **Testing**, ajouter votre adresse
+     dans **Test users**, sinon Google refuse la connexion.
 
 ### Limitations serverless
 
