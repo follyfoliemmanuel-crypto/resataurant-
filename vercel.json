@@ -8,5 +8,11 @@
     "api/**/*.ts": {
       "maxDuration": 30
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api?__savora_path=$1"
+    }
+  ]
 }
