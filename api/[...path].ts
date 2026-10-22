@@ -1,13 +1,3 @@
-<<<<<<< HEAD
-
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { server } from "../server/index.js";
-
-export default function handler(
-  req: IncomingMessage,
-  res: ServerResponse,
-) {
-=======
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { server } from "../server/index.js";
 
@@ -17,6 +7,5 @@ import { server } from "../server/index.js";
  * Toutes les routes /api/* arrivent ici.
  */
 export default function handler(req: IncomingMessage, res: ServerResponse) {
->>>>>>> d55ed85 (fix: reparer le serveur, securiser les paiements et preparer le deploiement Vercel)
   server.emit("request", req, res);
 }

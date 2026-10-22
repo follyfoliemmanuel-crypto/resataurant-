@@ -2301,10 +2301,6 @@ function sendResponse(res: http.ServerResponse, fetchRes: Response) {
 
 const port = config.apiPort || 8787;
 
-<<<<<<< HEAD
-if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
-  server.listen(port, () => {
-=======
 // Sur Vercel (fonction serverless) on n'ouvre JAMAIS de port : la fonction
 // reçoit les requêtes via `server.emit("request", ...)` dans api/[...path].ts.
 const isServerless = Boolean(process.env.VERCEL);
@@ -2320,9 +2316,6 @@ if (config.isProd) {
 
 if (process.env.NODE_ENV !== "test" && !isServerless) {
   server.listen(port, "0.0.0.0", () => {
->>>>>>> d55ed85 (fix: reparer le serveur, securiser les paiements et preparer le deploiement Vercel)
     console.log(`[savora-api] Server running on http://localhost:${port}`);
   });
-}
-
 }
