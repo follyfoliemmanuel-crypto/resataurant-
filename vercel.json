@@ -1,20 +1,16 @@
-<<<<<<< HEAD
 
-=======
->>>>>>> d55ed85 (fix: reparer le serveur, securiser les paiements et preparer le deploiement Vercel)
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-<<<<<<< HEAD
+
   "installCommand": "npm install"
-=======
+
   "installCommand": "npm install",
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 30
     }
   }
->>>>>>> d55ed85 (fix: reparer le serveur, securiser les paiements et preparer le deploiement Vercel)
-}
+
