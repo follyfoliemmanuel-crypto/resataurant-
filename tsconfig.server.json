@@ -15,5 +15,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["server", "tests", "netlify"]
+  "include": ["server", "tests", "api", "netlify"]
 }

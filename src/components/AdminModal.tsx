@@ -9,7 +9,7 @@ import {
 import type { AuthUser, DashboardStats, Order, Category, Plat, Promotion } from '../types';
 import {
   login, register, verifyCode, logout, fetchAdminStats, fetchAdminOrders,
-  updateOrderStatus, createPlat, deletePlat,
+  updateOrderStatus, createPlat, deletePlat, validatePassword,
   requestPasswordReset, resetPassword, resendVerification,
   fetchAdminPromotions, createAdminPromotion, updateAdminPromotion, deleteAdminPromotion
 } from '../api';
@@ -226,8 +226,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setAuthError("Jeton de réinitialisation manquant ou invalide.");
       return;
     }
-    if (newPassword.length < 6) {
-      setAuthError("Le mot de passe doit comporter au moins 6 caractères.");
+    const issues = validatePassword(newPassword);
+    if (issues.length > 0) {
+      setAuthError(issues[0]);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -465,7 +466,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         required
                         value={newPassword}
                         onChange={e => setNewPassword(e.target.value)}
-                        placeholder="Au moins 6 caractères"
+                        placeholder="12 caractères min. (majuscule, minuscule, chiffre)"
                         className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-hidden focus:border-orange-500"
                       />
                     </div>
@@ -746,7 +747,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         required
                         value={password}
                         onChange={e => setPassword(e.target.value)}
-                        placeholder="Au moins 6 caractères"
+                        placeholder="12 caractères min. (majuscule, minuscule, chiffre)"
                         className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-hidden focus:border-orange-500"
                       />
                     </div>

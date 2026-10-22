@@ -28,7 +28,8 @@ export const config = {
   nodeEnv,
   isProd: nodeEnv === "production",
   appUrl,
-  apiPort: Number(process.env.API_PORT ?? 8787),
+  // PORT est fourni par les plateformes d'hébergement (Render, Railway, Fly…).
+  apiPort: Number(process.env.PORT ?? process.env.API_PORT ?? 8787),
   databaseUrl: process.env.DATABASE_URL ?? "",
   appSecret: process.env.APP_SECRET ?? "dev-only-change-me-please-use-32-bytes",
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
@@ -52,13 +53,28 @@ export function requireDatabaseUrl() {
   if (!config.databaseUrl) throw new Error("DATABASE_URL is not configured");
 }
 
-export function validateProductionConfig() {
-  if (!config.isProd) return;
+/**
+ * Liste (non bloquante) des variables manquantes ou dangereuses en production.
+ * Sert au démarrage (log) et à /api/health, sans empêcher le déploiement.
+ */
+export function productionConfigIssues() {
+  const issues: string[] = [];
   if (!process.env.APP_SECRET || process.env.APP_SECRET.length < 32) {
-    throw new Error("APP_SECRET must be configured with at least 32 characters in production");
+    issues.push("APP_SECRET doit contenir au moins 32 caractères.");
   }
   if (!/^https:\/\//i.test(config.appUrl)) {
-    throw new Error("APP_URL must use HTTPS in production");
+    issues.push("APP_URL doit être une URL HTTPS (ex. https://savora.vercel.app).");
   }
-  requireDatabaseUrl();
+  if (!config.databaseUrl) {
+    issues.push("DATABASE_URL est absent.");
+  }
+  if (!config.resendApiKey && !config.smtp.host) {
+    issues.push("Aucun service e-mail configuré (RESEND_API_KEY ou SMTP).");
+  }
+  return config.isProd ? issues : [];
+}
+
+export function validateProductionConfig() {
+  const issues = productionConfigIssues();
+  if (issues.length > 0) throw new Error(issues[0]);
 }

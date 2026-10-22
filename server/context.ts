@@ -117,12 +117,24 @@ export function clearSessionCookie() {
 export function assertSameOrigin(req: Request) {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return;
   const origin = req.headers.get("origin");
+  if (!origin) return;
   const app = new URL(config.appUrl);
-  if (origin) {
-    const incoming = new URL(origin);
-    if (incoming.host !== app.host && incoming.hostname !== "localhost" && incoming.hostname !== "127.0.0.1") {
-      throw new HttpError(403, "Origine non autorisée.", "csrf");
-    }
+  let incoming: URL;
+  try {
+    incoming = new URL(origin);
+  } catch {
+    throw new HttpError(403, "Origine invalide.", "csrf");
+  }
+  const isSameHost = incoming.host === app.host;
+  // Same-origin réel : couvre les déploiements dont APP_URL n'est pas encore
+  // configuré. Une requête d'un autre site a un Origin différent du Host.
+  const requestHost = req.headers.get("host");
+  const isSameOriginRequest = Boolean(requestHost) && incoming.host === requestHost;
+  const isLocalDev =
+    !config.isProd &&
+    (incoming.hostname === "localhost" || incoming.hostname === "127.0.0.1");
+  if (!isSameHost && !isSameOriginRequest && !isLocalDev) {
+    throw new HttpError(403, "Origine non autorisée.", "csrf");
   }
 }
 

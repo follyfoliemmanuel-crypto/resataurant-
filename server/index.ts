@@ -1,24 +1,27 @@
 import http from "node:http";
 import { randomInt, createHash } from "node:crypto";
-import { config } from "./lib/config.js";
+import { config, productionConfigIssues } from "./lib/config.js";
 import {
   buildContext,
   requirePermission,
+  requireUser,
   publicUser,
   sessionCookieHeader,
   clearSessionCookie,
   assertSameOrigin,
 } from "./context.js";
 import { query, withTransaction } from "./lib/db.js";
-import { HttpError, errorResponse, json, cookie, parseCookies } from "./lib/http.js";
+import { HttpError, errorResponse, json, cookie, parseCookies, safeEqual } from "./lib/http.js";
 import {
   hashPassword,
   verifyPassword,
   randomToken,
   sha256,
+  hashIp,
   passwordIssues,
   isEmail,
 } from "./lib/crypto.js";
+import { checkHealth } from "./lib/health.js";
 import {
   computeOrderTotals,
   applyPromotion,
@@ -27,7 +30,7 @@ import {
 } from "./lib/pricing.js";
 import { writeAudit, notifyStaff } from "./lib/audit.js";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./lib/mail.js";
-import { tooManyLoginAttempts, recordLoginAttempt } from "./lib/rate-limit.js";
+import { tooManyLoginAttempts, recordLoginAttempt, rateLimit } from "./lib/rate-limit.js";
 
 const MAX_BODY_SIZE = 1024 * 1024; // 1 Mo max body
 
@@ -144,6 +147,23 @@ export const server = http.createServer(async (req, res) => {
   }
 
   const rawPath = (req.url || "").split("?")[0];
+
+  // --- HEALTH CHECK (public, sans détail sensible) ---
+  if (req.method === "GET" && rawPath === "/api/health") {
+    const health = await checkHealth();
+    const issues = productionConfigIssues();
+    const body = {
+      ...health,
+      config: issues.length === 0 ? "ok" : "incomplete",
+      // Les noms de variables manquantes ne sont utiles qu'en dehors de la prod.
+      ...(issues.length > 0 && !config.isProd ? { issues } : {}),
+    };
+    return sendResponse(
+      res,
+      json(body, health.status === "ok" && issues.length === 0 ? 200 : 503),
+    );
+  }
+
   if (req.method === "GET" && rawPath === "/api/events") {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -253,6 +273,17 @@ export const server = http.createServer(async (req, res) => {
         return sendResponse(
           res,
           json({ valid: false, message: "Code promo requis." }, 400),
+        );
+      }
+
+      // Anti-brute-force : 40 vérifications par minute et par IP.
+      if (!rateLimit(`promo:${ctx.restaurantId}:${ctx.ip ?? "unknown"}`, 40, 60_000)) {
+        return sendResponse(
+          res,
+          json(
+            { valid: false, message: "Trop de vérifications de code. Réessayez dans une minute." },
+            429,
+          ),
         );
       }
 
@@ -415,7 +446,7 @@ export const server = http.createServer(async (req, res) => {
       const platIds = items.map((i: any) => i.platId);
       const dbPlatsRes = await query(
         `SELECT id, name, price FROM plats
-         WHERE id = ANY($1) AND restaurant_id = $2`,
+         WHERE id = ANY($1) AND restaurant_id = $2 AND is_available = TRUE`,
         [platIds, ctx.restaurantId],
       );
 
@@ -425,7 +456,10 @@ export const server = http.createServer(async (req, res) => {
         const p = dbPlatsMap.get(item.platId);
 
         if (!p) {
-          throw new HttpError(400, `Plat introuvable: ${item.platId}`);
+          throw new HttpError(
+            400,
+            "Un plat de votre panier n'est plus disponible. Rechargez la carte.",
+          );
         }
 
         const qty = Math.max(1, Math.min(50, Number(item.quantity) || 1));
@@ -446,6 +480,30 @@ export const server = http.createServer(async (req, res) => {
       );
 
       const { order: createdOrder, totals, orderNumber } = await withTransaction(async (client) => {
+        // Verrouille et contrôle le stock AVANT toute écriture (anti-survente).
+        // Une absence de ligne de stock signifie que le plat n'est pas suivi en stock.
+        const neededByPlat = new Map<string, number>();
+        for (const line of pricedLines) {
+          neededByPlat.set(
+            line.platId,
+            (neededByPlat.get(line.platId) ?? 0) + line.quantity,
+          );
+        }
+        for (const [platId, needed] of neededByPlat) {
+          const stockRes = await client.query<{ quantity: number }>(
+            `SELECT quantity FROM stock
+             WHERE plat_id = $1 AND restaurant_id = $2
+             FOR UPDATE`,
+            [platId, ctx.restaurantId],
+          );
+          const stockRow = stockRes.rows[0];
+          if (stockRow && Number(stockRow.quantity) < needed) {
+            const name =
+              pricedLines.find((l) => l.platId === platId)?.name ?? "ce plat";
+            throw new HttpError(400, `Stock insuffisant pour « ${name} ».`);
+          }
+        }
+
         let discount = 0;
         let appliedPromoRow: {
           id: string;
@@ -525,7 +583,8 @@ export const server = http.createServer(async (req, res) => {
           discount,
         });
 
-        const orderNumber = `SAV-${Date.now().toString().slice(-6)}`;
+        // Horodatage + aléa : évite les collisions entre deux commandes simultanées.
+        const orderNumber = `SAV-${Date.now().toString(36).toUpperCase()}-${randomInt(1000, 10000)}`;
 
         let clientId: string;
 
@@ -896,7 +955,7 @@ export const server = http.createServer(async (req, res) => {
         }
 
         const attemptKey = `verify:${codeEmail}`;
-        const ipHash = sha256(String(ctx.ip ?? "unknown"));
+        const ipHash = hashIp(ctx.ip) ?? "unknown";
 
         if (await tooManyLoginAttempts(ctx.restaurantId, attemptKey, null)) {
           throw new HttpError(
@@ -1029,7 +1088,7 @@ export const server = http.createServer(async (req, res) => {
       }
 
       const loginEmail = String(email).trim().toLowerCase();
-      const loginIpHash = ctx.ip ? sha256(ctx.ip) : null;
+      const loginIpHash = hashIp(ctx.ip);
       if (await tooManyLoginAttempts(ctx.restaurantId, loginEmail, loginIpHash)) {
         throw new HttpError(429, "Trop de tentatives de connexion. Réessaie dans 15 minutes.");
       }
@@ -1112,7 +1171,7 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Adresse e-mail requise.");
       }
 
-      const ipHash = ctx.ip ? sha256(ctx.ip) : null;
+      const ipHash = hashIp(ctx.ip);
       if (await tooManyLoginAttempts(ctx.restaurantId, `resend:${email}`, ipHash)) {
         throw new HttpError(429, "Trop de demandes. Réessayez dans 15 minutes.");
       }
@@ -1199,7 +1258,7 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Adresse e-mail requise.");
       }
 
-      const ipHash = ctx.ip ? sha256(ctx.ip) : null;
+      const ipHash = hashIp(ctx.ip);
       if (await tooManyLoginAttempts(ctx.restaurantId, `forgot:${email}`, ipHash)) {
         throw new HttpError(429, "Trop de tentatives de réinitialisation. Réessayez dans 15 minutes.");
       }
@@ -1270,7 +1329,7 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, issues[0]);
       }
 
-      const ipHash = ctx.ip ? sha256(ctx.ip) : null;
+      const ipHash = hashIp(ctx.ip);
       if (await tooManyLoginAttempts(ctx.restaurantId, "reset-password", ipHash)) {
         throw new HttpError(429, "Trop de tentatives. Réessayez dans 15 minutes.");
       }
@@ -1378,15 +1437,15 @@ export const server = http.createServer(async (req, res) => {
       const rawState = typeof queryMap.state === "string" ? queryMap.state : null;
       const rawError = typeof queryMap.error === "string" ? queryMap.error : null;
 
-      const code = (rawCode && rawCode.length >= 10 && rawCode.length <= 512 && /^[\w\-./]+$/.test(rawCode))
+      const code = (rawCode && rawCode.length >= 10 && rawCode.length <= 512 && /^[\w./-]+$/.test(rawCode))
         ? rawCode
         : null;
 
-      const state = (rawState && rawState.length >= 20 && rawState.length <= 256 && /^[\w\-]+$/.test(rawState))
+      const state = (rawState && rawState.length >= 20 && rawState.length <= 256 && /^[\w-]+$/.test(rawState))
         ? rawState
         : null;
 
-      const error = (rawError && rawError.length <= 128 && /^[\w\- _]+$/.test(rawError))
+      const error = (rawError && rawError.length <= 128 && /^[\w _-]+$/.test(rawError))
         ? rawError
         : null;
 
@@ -2014,6 +2073,8 @@ export const server = http.createServer(async (req, res) => {
 
     // --- PAYGATE: INITIATE PAYMENT ---
     if (req.method === "POST" && pathname === "/api/payments/initiate") {
+      // Paiement en ligne réservé au client propriétaire de la commande ou au staff.
+      const user = requireUser(ctx);
       const body = await parseBody(req);
       const orderId = String(body.orderId ?? "").trim();
       const phoneNumber = String(body.phoneNumber ?? "").trim();
@@ -2031,9 +2092,16 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Numéro de téléphone invalide.");
       }
 
-      const orderRes = await query<{ id: string; total: string; status: string }>(
-        `SELECT id, total, status FROM orders
-         WHERE id = $1 AND restaurant_id = $2
+      const orderRes = await query<{
+        id: string;
+        total: string;
+        status: string;
+        client_user_id: string | null;
+      }>(
+        `SELECT o.id, o.total, o.status, c.user_id AS client_user_id
+         FROM orders o
+         JOIN clients c ON c.id = o.client_id
+         WHERE o.id = $1 AND o.restaurant_id = $2
          LIMIT 1`,
         [orderId, ctx.restaurantId],
       );
@@ -2041,6 +2109,12 @@ export const server = http.createServer(async (req, res) => {
       const order = orderRes.rows[0];
       if (!order) {
         throw new HttpError(404, "Commande introuvable.");
+      }
+
+      const isOwner = order.client_user_id === user.id;
+      const isStaff = user.role !== "customer";
+      if (!isOwner && !isStaff) {
+        throw new HttpError(403, "Cette commande ne vous appartient pas.", "forbidden");
       }
 
       if (order.status === "cancelled") {
@@ -2160,6 +2234,20 @@ export const server = http.createServer(async (req, res) => {
         throw new HttpError(400, "Statut de paiement invalide.");
       }
 
+      // Webhook PayGate (jeton partagé) OU membre du staff authentifié.
+      // Sans l'un des deux, n'importe qui pourrait marquer une commande « payée ».
+      const providerToken = process.env.PAYGATE_API_TOKEN ?? "";
+      const headerToken = String(req.headers["x-paygate-token"] ?? "");
+      const providedToken = String(
+        body.auth_token ?? body.token ?? headerToken ?? "",
+      );
+      const fromProvider =
+        providerToken.length > 0 && safeEqual(providedToken, providerToken);
+      const isStaffUser = Boolean(ctx.user && ctx.user.role !== "customer");
+      if (!fromProvider && !isStaffUser) {
+        throw new HttpError(403, "Requête de paiement non autorisée.", "forbidden");
+      }
+
       await withTransaction(async (client) => {
         const locked = await client.query<{ id: string; order_id: string; status: string }>(
           `SELECT id, order_id, status FROM payments WHERE id = $1 FOR UPDATE`,
@@ -2213,8 +2301,26 @@ function sendResponse(res: http.ServerResponse, fetchRes: Response) {
 
 const port = config.apiPort || 8787;
 
+<<<<<<< HEAD
 if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) {
   server.listen(port, () => {
+=======
+// Sur Vercel (fonction serverless) on n'ouvre JAMAIS de port : la fonction
+// reçoit les requêtes via `server.emit("request", ...)` dans api/[...path].ts.
+const isServerless = Boolean(process.env.VERCEL);
+
+if (config.isProd) {
+  const issues = productionConfigIssues();
+  if (issues.length > 0) {
+    console.error(
+      `[savora-api] Configuration de production incomplète :\n - ${issues.join("\n - ")}`,
+    );
+  }
+}
+
+if (process.env.NODE_ENV !== "test" && !isServerless) {
+  server.listen(port, "0.0.0.0", () => {
+>>>>>>> d55ed85 (fix: reparer le serveur, securiser les paiements et preparer le deploiement Vercel)
     console.log(`[savora-api] Server running on http://localhost:${port}`);
   });
 }
