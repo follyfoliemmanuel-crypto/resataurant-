@@ -2292,8 +2292,19 @@ function sendResponse(res: http.ServerResponse, fetchRes: Response) {
   res.statusCode = fetchRes.status;
 
   fetchRes.headers.forEach((val, key) => {
+    // Les cookies doivent être transmis un par un : fusionner plusieurs
+    // en-têtes Set-Cookie dans une seule ligne fait perdre des cookies.
+    if (key.toLowerCase() === "set-cookie") return;
     res.setHeader(key, val);
   });
+
+  const setCookies =
+    typeof fetchRes.headers.getSetCookie === "function"
+      ? fetchRes.headers.getSetCookie()
+      : [];
+  if (setCookies.length > 0) {
+    res.setHeader("Set-Cookie", setCookies);
+  }
 
   fetchRes.text().then((text) => res.end(text));
 }

@@ -39,15 +39,43 @@ const appUrl = (process.env.APP_URL?.trim() || fallbackAppUrl).replace(/\/+$/, "
 const isProd = nodeEnv === "production" || Boolean(process.env.VERCEL);
 
 /**
- * URI de redirection OAuth. En production on ignore une valeur locale
- * (localhost) héritée du .env local, qui ferait échouer Google avec
- * « redirect_uri_mismatch ».
+ * Normalise une URL : supprime les slashs doublés dans le chemin
+ * (`https://h//api/x` → `https://h/api/x`), ce qui sinon casse le routage
+ * et fait échouer Google avec un redirect_uri invalide.
+ */
+function normalizeUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * URI de redirection OAuth.
+ * - En production, elle doit rester sur le même hôte que APP_URL (sinon le
+ *   cookie d'état n'est pas renvoyé au callback → « session_invalide »).
+ * - Une valeur localhost héritée du .env local est ignorée en production.
  */
 function resolveGoogleRedirectUri() {
-  const configured = (process.env.GOOGLE_REDIRECT_URI ?? "").trim();
+  const configured = normalizeUrl((process.env.GOOGLE_REDIRECT_URI ?? "").trim());
   const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(configured);
-  if (configured && !(isProd && isLocal)) return configured;
-  if (isProd) return `${appUrl}/api/auth/google/callback`;
+
+  if (isProd) {
+    const derived = `${appUrl}/api/auth/google/callback`;
+    if (configured && !isLocal) {
+      try {
+        if (new URL(configured).host === new URL(appUrl).host) return configured;
+      } catch {
+        // URL invalide : on retombe sur la valeur déduite.
+      }
+    }
+    return derived;
+  }
+
+  if (configured) return configured;
   return "http://localhost:8787/api/auth/google/callback";
 }
 
