@@ -24,8 +24,31 @@ const sql = fs.readFileSync(path.join(root, "database", "seed", "demo.sql"), "ut
 await client.query(sql);
 
 const restaurantId = "00000000-0000-4000-8000-000000000001";
-const ownerHash = hashPassword("SavoraOwner!2026");
-const clientHash = hashPassword("SavoraClient!2026");
+
+const ownerPassword = process.env.OWNER_PASSWORD;
+if (!ownerPassword) {
+  console.error("La variable d'environnement du compte propriétaire est requise (voir .env.example).");
+  process.exit(1);
+}
+const ownerIssues = passwordIssues(ownerPassword);
+if (ownerIssues.length > 0) {
+  console.error(`La valeur du compte propriétaire est trop faible : ${ownerIssues.join(" ")}`);
+  process.exit(1);
+}
+
+const clientPassword = process.env.CLIENT_PASSWORD;
+if (!clientPassword) {
+  console.error("La variable d'environnement du client de démonstration est requise (voir .env.example).");
+  process.exit(1);
+}
+const clientIssues = passwordIssues(clientPassword);
+if (clientIssues.length > 0) {
+  console.error(`La valeur du client de démonstration est trop faible : ${clientIssues.join(" ")}`);
+  process.exit(1);
+}
+
+const ownerHash = hashPassword(ownerPassword);
+const clientHash = hashPassword(clientPassword);
 
 await client.query(
   `INSERT INTO users (id, restaurant_id, email, password_hash, name, role_id, email_verified, is_active)
@@ -72,13 +95,22 @@ await client.query(
 
 await client.end();
 console.log("seed complete");
-console.log("owner: owner@maison-lumen.example / SavoraOwner!2026");
-console.log("client: client@maison-lumen.example / SavoraClient!2026");
+console.log("Comptes de démonstration créés (identifiants : voir README).");
 
 function hashPassword(password) {
   const salt = randomBytes(16);
   const hash = scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
   return `scrypt$16384$8$1$${salt.toString("base64url")}$${hash.toString("base64url")}`;
+}
+
+function passwordIssues(password) {
+  const issues = [];
+  if (password.length < 12) issues.push("au moins 12 caractères.");
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
+    issues.push("majuscules et minuscules.");
+  }
+  if (!/[0-9]/.test(password)) issues.push("au moins un chiffre.");
+  return issues;
 }
 
 function loadEnv(file) {

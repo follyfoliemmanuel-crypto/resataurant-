@@ -22,8 +22,17 @@ Comptes créés par `npm run seed` (démo uniquement) :
 
 | Rôle | Email | Mot de passe |
 | --- | --- | --- |
-| Owner | `owner@maison-lumen.example` | `SavoraOwner!2026` |
-| Client | `client@maison-lumen.example` | `SavoraClient!2026` |
+| Owner | `owner@maison-lumen.example` | `OWNER_PASSWORD` (variable d'environnement) |
+| Client | `client@maison-lumen.example` | `CLIENT_PASSWORD` (variable d'environnement) |
+
+Définissez les deux valeurs avant de lancer le seed :
+
+```bash
+OWNER_PASSWORD='...' CLIENT_PASSWORD='...' npm run seed
+```
+
+> Les mots de passe historiques des comptes de démonstration sont publics dans l'historique Git :
+> s'ils ont déjà servi, changez-les immédiatement.
 
 > Ne lancez jamais `npm run seed` sur une base de production : il remplace les mots de passe.
 

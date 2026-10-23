@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import type { AuthUser, DashboardStats, Order, Category, Plat, Promotion } from '../types';
 import {
-  login, register, verifyCode, logout, fetchAdminStats, fetchAdminOrders,
+  login, createAccount, verifyCode, logout, fetchAdminStats, fetchAdminOrders,
   updateOrderStatus, createPlat, deletePlat, validatePassword,
   requestPasswordReset, resetPassword, resendVerification,
   fetchAdminPromotions, createAdminPromotion, updateAdminPromotion, deleteAdminPromotion
@@ -144,13 +144,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     e.preventDefault();
     setAuthError('');
     setRegisterSuccessMsg(null);
-    if (!password || password.length < 12 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
-      setAuthError('Le mot de passe doit comporter au moins 12 caractères, avec majuscule, minuscule et chiffre.');
+    const issues = validatePassword(password);
+    if (issues.length > 0) {
+      setAuthError(issues[0]);
       return;
     }
     setIsAuthLoading(true);
-    const accountPassword = password;
-    const res = await register(name, email, accountPassword);
+    const res = await createAccount(name, email, password);
     setIsAuthLoading(false);
     if (res.success) {
       if (res.requiresVerification) {

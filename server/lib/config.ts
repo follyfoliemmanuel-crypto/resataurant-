@@ -86,7 +86,9 @@ export const config = {
   // PORT est fourni par les plateformes d'hébergement (Render, Railway, Fly…).
   apiPort: Number(process.env.PORT ?? process.env.API_PORT ?? 8787),
   databaseUrl: process.env.DATABASE_URL ?? "",
-  appSecret: process.env.APP_SECRET ?? "dev-only-change-me-please-use-32-bytes",
+  // Aucun secret par défaut : APP_SECRET doit provenir de l'environnement.
+  // En production, productionConfigIssues() signale une valeur absente ou trop courte.
+  appSecret: process.env.APP_SECRET ?? "",
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   googleRedirectUri: resolveGoogleRedirectUri(),

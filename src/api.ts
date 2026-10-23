@@ -123,7 +123,7 @@ export function validatePassword(password: string): string[] {
   return issues;
 }
 
-export async function register(name: string, email: string, pwd: string): Promise<{ 
+export async function createAccount(name: string, email: string, pwd: string): Promise<{ 
   success: boolean; 
   requiresVerification?: boolean;
   message?: string;
