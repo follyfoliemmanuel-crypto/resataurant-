@@ -31,6 +31,17 @@ import {
 import { writeAudit, notifyStaff } from "./lib/audit.js";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./lib/mail.js";
 import { tooManyLoginAttempts, recordLoginAttempt, rateLimit } from "./lib/rate-limit.js";
+import {
+  generateAllWeeklyReports,
+  generateWeeklyReport,
+  getWeeklyReportFile,
+  listWeeklyReports,
+} from "./lib/report-service.js";
+import {
+  isCronAuthorized,
+  periodFromWeekStart,
+  previousWeekPeriod,
+} from "./lib/reports.js";
 
 const MAX_BODY_SIZE = 1024 * 1024; // 1 Mo max body
 
@@ -212,6 +223,41 @@ export const server = http.createServer(async (req, res) => {
 
   try {
     assertSameOrigin(fetchReq);
+
+    // --- CRON VERCEL : RAPPORTS HEBDOMADAIRES ---
+    // Appelé chaque lundi par Vercel Cron. Aucune session utilisateur :
+    // l'authentification repose sur le secret partagé CRON_SECRET.
+    if (req.method === "GET" && pathname === "/api/cron/weekly-reports") {
+      const cronSecret = process.env.CRON_SECRET ?? "";
+      if (!cronSecret) {
+        throw new HttpError(
+          503,
+          "CRON_SECRET n'est pas configuré.",
+          "cron_unconfigured",
+        );
+      }
+      if (!isCronAuthorized(fetchReq.headers.get("authorization"), cronSecret)) {
+        throw new HttpError(401, "Tâche planifiée non autorisée.", "unauthorized");
+      }
+
+      const period = previousWeekPeriod(new Date());
+      const result = await generateAllWeeklyReports(period, "cron");
+      return sendResponse(
+        res,
+        json(
+          {
+            success: result.failed === 0,
+            period,
+            generated: result.generated,
+            skipped: result.skipped,
+            failed: result.failed,
+            results: result.results,
+          },
+          result.failed === 0 ? 200 : 500,
+        ),
+      );
+    }
+
     const ctx = await buildContext(fetchReq);
 
     // --- PUBLIC RESTAURANT INFO & SETTINGS ---
@@ -1708,6 +1754,81 @@ export const server = http.createServer(async (req, res) => {
       return sendResponse(res, json({ summary, recentOrders, popularPlats }));
     }
 
+    // --- ADMIN: WEEKLY REPORTS LIST ---
+    if (req.method === "GET" && pathname === "/api/admin/reports/weekly") {
+      requirePermission(ctx, "statistics");
+
+      const reports = await listWeeklyReports(ctx.restaurantId);
+      return sendResponse(res, json({ reports }));
+    }
+
+    // --- ADMIN: DOWNLOAD A WEEKLY REPORT PDF ---
+    const reportDownloadMatch = pathname.match(
+      /^\/api\/admin\/reports\/weekly\/([0-9a-f-]{36})\/download$/i,
+    );
+    if (req.method === "GET" && reportDownloadMatch) {
+      requirePermission(ctx, "statistics");
+
+      const file = await getWeeklyReportFile(
+        ctx.restaurantId,
+        reportDownloadMatch[1],
+      );
+      const safeFileName = file.fileName.replace(/["\\\r\n]/g, "");
+
+      return sendResponse(
+        res,
+        new Response(new Uint8Array(file.data), {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": `attachment; filename="${safeFileName}"`,
+            "cache-control": "private, no-store",
+            "x-content-type-options": "nosniff",
+          },
+        }),
+      );
+    }
+
+    // --- ADMIN: GENERATE OR RETRY A WEEKLY REPORT ---
+    if (
+      req.method === "POST" &&
+      pathname === "/api/admin/reports/weekly/generate"
+    ) {
+      requirePermission(ctx, "statistics");
+
+      const body = await parseBody(req);
+      const weekStart = String(body.weekStart ?? "").trim();
+      let period;
+      try {
+        period = weekStart
+          ? periodFromWeekStart(weekStart)
+          : previousWeekPeriod(new Date());
+      } catch (error) {
+        throw new HttpError(
+          400,
+          error instanceof Error ? error.message : "Période invalide.",
+          "invalid_period",
+        );
+      }
+
+      const result = await generateWeeklyReport(
+        ctx.restaurantId,
+        period,
+        "manual",
+      );
+      return sendResponse(
+        res,
+        json(
+          {
+            success: true,
+            status: result.status,
+            report: result.report,
+          },
+          result.status === "generated" ? 201 : 200,
+        ),
+      );
+    }
+
     // --- ADMIN: ORDERS LIST ---
     if (req.method === "GET" && pathname === "/api/admin/orders") {
       requirePermission(ctx, "orders");
@@ -1798,10 +1919,41 @@ export const server = http.createServer(async (req, res) => {
 
       const platId = pathname.split("/").pop();
 
-      await query(`DELETE FROM plats WHERE id = $1 AND restaurant_id = $2`, [
-        platId,
-        ctx.restaurantId,
-      ]);
+      if (!platId) {
+        throw new HttpError(400, "Identifiant du plat manquant.");
+      }
+
+      try {
+        const deleted = await query<{ id: string }>(
+          `DELETE FROM plats
+           WHERE id = $1 AND restaurant_id = $2
+           RETURNING id`,
+          [platId, ctx.restaurantId],
+        );
+
+        if (deleted.rows.length === 0) {
+          throw new HttpError(404, "Plat introuvable.");
+        }
+      } catch (err) {
+        // Un plat déjà présent dans des commandes ne peut pas être supprimé
+        // physiquement (clé étrangère order_items.plat_id). On le retire
+        // alors de la carte sans casser l'historique des commandes.
+        if ((err as { code?: string }).code === "23503") {
+          const hidden = await query<{ id: string }>(
+            `UPDATE plats
+             SET is_available = FALSE, updated_at = now()
+             WHERE id = $1 AND restaurant_id = $2
+             RETURNING id`,
+            [platId, ctx.restaurantId],
+          );
+
+          if (hidden.rows.length === 0) {
+            throw new HttpError(404, "Plat introuvable.");
+          }
+        } else {
+          throw err;
+        }
+      }
 
       return sendResponse(res, json({ success: true }));
     }
@@ -2306,7 +2458,13 @@ function sendResponse(res: http.ServerResponse, fetchRes: Response) {
     res.setHeader("Set-Cookie", setCookies);
   }
 
-  fetchRes.text().then((text) => res.end(text));
+  fetchRes
+    .arrayBuffer()
+    .then((body) => res.end(Buffer.from(body)))
+    .catch((error) => {
+      console.error("[savora] réponse impossible à transmettre:", error);
+      if (!res.writableEnded) res.end();
+    });
 }
 
 

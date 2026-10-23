@@ -4,14 +4,16 @@ import { useServerEvents } from '../hooks/useServerEvents';
 import {
   X, LogOut, TrendingUp, ShoppingBag,
   Plus, AlertCircle, ImageIcon, Utensils, UserCheck,
-  Tag, Search, Edit2, Trash2, Check, ArrowLeft, KeyRound
+  Tag, Search, Edit2, Trash2, Check, ArrowLeft, KeyRound,
+  FileText, Download, RefreshCw
 } from 'lucide-react';
-import type { AuthUser, DashboardStats, Order, Category, Plat, Promotion } from '../types';
+import type { AuthUser, DashboardStats, Order, Category, Plat, Promotion, WeeklyReport } from '../types';
 import {
   login, createAccount, verifyCode, logout, fetchAdminStats, fetchAdminOrders,
   updateOrderStatus, createPlat, deletePlat, validatePassword,
   requestPasswordReset, resetPassword, resendVerification,
-  fetchAdminPromotions, createAdminPromotion, updateAdminPromotion, deleteAdminPromotion
+  fetchAdminPromotions, createAdminPromotion, updateAdminPromotion, deleteAdminPromotion,
+  fetchWeeklyReports, generateWeeklyReport, downloadWeeklyReport
 } from '../api';
 
 interface AdminModalProps {
@@ -39,7 +41,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   initialMode = 'login',
   resetToken = null,
 }) => {
-  const [tab, setTab] = useState<'stats' | 'orders' | 'menu' | 'promos'>('stats');
+  const [tab, setTab] = useState<'stats' | 'orders' | 'menu' | 'promos' | 'reports'>('stats');
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot' | 'reset'>(initialMode);
 
   // Auth fields
@@ -80,6 +82,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [newPlatImage, setNewPlatImage] = useState('');
   const [newPlatPopular, setNewPlatPopular] = useState(false);
   const [creatingPlat, setCreatingPlat] = useState(false);
+  const [platError, setPlatError] = useState('');
+
+  // Rapports hebdomadaires
+  const [weeklyReports, setWeeklyReports] = useState<WeeklyReport[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsError, setReportsError] = useState('');
+  const [reportsNotice, setReportsNotice] = useState('');
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
 
   useEffect(() => {
     setAuthMode(initialMode);
@@ -112,6 +123,26 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     if (promosRes) setPromotions(prev => (JSON.stringify(prev) === JSON.stringify(promosRes) ? prev : promosRes));
     if (!silent) setLoadingData(false);
   };
+
+  const loadWeeklyReports = async () => {
+    setReportsLoading(true);
+    setReportsError('');
+    const result = await fetchWeeklyReports();
+    setReportsLoading(false);
+    if (!result.success) {
+      setReportsError(result.error || 'Impossible de charger les rapports hebdomadaires.');
+      return;
+    }
+    setWeeklyReports(result.reports);
+  };
+
+  useEffect(() => {
+    if (!isOpen || !currentUser || currentUser.role === 'customer' || tab !== 'reports') return;
+    void loadWeeklyReports();
+    // La fonction est volontairement recréée à chaque rendu : seule l'ouverture
+    // de l'onglet ou un changement d'utilisateur doit relancer le chargement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, currentUser, tab]);
 
   usePolling(() => loadAdminData(true), 5_000, isOpen && !!currentUser && currentUser.role !== 'customer');
   useServerEvents(() => loadAdminData(true), isOpen && !!currentUser && currentUser.role !== 'customer');
@@ -279,15 +310,74 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setNewPlatDesc('');
       setNewPlatImage('');
       setNewPlatPopular(false);
+      setPlatError('');
       onRefreshMenu();
     }
   };
 
   const handleDeletePlat = async (id: string) => {
-    if (window.confirm('Voulez-vous supprimer ce plat de la carte ?')) {
-      await deletePlat(id);
+    if (!window.confirm('Voulez-vous supprimer ce plat de la carte ?')) return;
+
+    setPlatError('');
+    const result = await deletePlat(id);
+
+    if (result.success) {
       onRefreshMenu();
+    } else {
+      setPlatError(result.error ?? 'Impossible de supprimer ce plat.');
     }
+  };
+
+  const formatReportDate = (iso: string) =>
+    new Date(`${iso.slice(0, 10)}T00:00:00.000Z`).toLocaleDateString('fr-FR', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+
+  const handleGenerateReport = async (weekStart?: string) => {
+    setGeneratingReport(true);
+    setReportsError('');
+    setReportsNotice('');
+    const result = await generateWeeklyReport(weekStart);
+    setGeneratingReport(false);
+
+    if (!result.success) {
+      setReportsError(result.error || 'Impossible de générer le rapport.');
+      return;
+    }
+
+    setReportsNotice(
+      result.status === 'skipped'
+        ? result.report?.status === 'processing' || result.report?.status === 'pending'
+          ? 'Une génération est déjà en cours pour cette semaine.'
+          : 'Un rapport existe déjà pour cette semaine.'
+        : 'Rapport généré et prêt à télécharger.',
+    );
+    await loadWeeklyReports();
+  };
+
+  const handleDownloadReport = async (report: WeeklyReport) => {
+    setDownloadingReportId(report.id);
+    setReportsError('');
+    setReportsNotice('');
+    const result = await downloadWeeklyReport(report.id);
+    setDownloadingReportId(null);
+
+    if (!result.success || !result.blob) {
+      setReportsError(result.error || 'Impossible de télécharger ce rapport.');
+      return;
+    }
+
+    const url = URL.createObjectURL(result.blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = result.filename || `savora-rapport-${report.week_start}.pdf`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // Promo Handlers
@@ -828,6 +918,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 <Tag className="w-4 h-4" />
                 <span>Codes promo ({promotions.length})</span>
               </button>
+              <button
+                onClick={() => setTab('reports')}
+                className={`py-3 px-3 sm:px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'reports'
+                  ? 'border-orange-600 text-orange-600'
+                  : 'border-transparent text-stone-500 hover:text-stone-900'
+                  }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>Rapports hebdomadaires</span>
+              </button>
             </div>
 
             {/* Tab Contents */}
@@ -1095,6 +1195,150 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </div>
                   )}
                 </div>
+              ) : tab === 'reports' ? (
+                /* WEEKLY REPORTS TAB */
+                <div className="space-y-5">
+                  <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h4 className="font-bold text-sm text-stone-900 flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-orange-600" />
+                        <span>Rapports hebdomadaires</span>
+                      </h4>
+                      <p className="text-xs text-stone-500 mt-1.5 max-w-2xl">
+                        Un PDF est généré automatiquement chaque lundi pour la semaine précédente,
+                        du lundi au dimanche. Les rapports sont conservés dans votre espace et
+                        téléchargeables à tout moment.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateReport()}
+                      disabled={generatingReport}
+                      className="px-4 py-2.5 bg-orange-600 hover:bg-orange-500 disabled:opacity-60 disabled:cursor-wait text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs shrink-0"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${generatingReport ? 'animate-spin' : ''}`} />
+                      <span>{generatingReport ? 'Génération...' : 'Générer la semaine dernière'}</span>
+                    </button>
+                  </div>
+
+                  {reportsError && (
+                    <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{reportsError}</span>
+                    </div>
+                  )}
+
+                  {reportsNotice && (
+                    <div className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-700">
+                      <Check className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{reportsNotice}</span>
+                    </div>
+                  )}
+
+                  {reportsLoading ? (
+                    <div className="text-center py-12 text-stone-400 text-sm bg-white rounded-2xl border border-stone-200">
+                      Chargement des rapports...
+                    </div>
+                  ) : weeklyReports.length === 0 ? (
+                    <div className="text-center py-12 text-stone-400 text-sm bg-white rounded-2xl border border-stone-200">
+                      <FileText className="w-8 h-8 mx-auto mb-2 text-stone-300" />
+                      <p className="font-semibold text-stone-600">Aucun rapport pour le moment.</p>
+                      <p className="mt-1">Le premier rapport sera généré lundi, ou générez-le manuellement dès maintenant.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {weeklyReports.map(report => {
+                        const isCompleted = report.status === 'completed';
+                        const isFailed = report.status === 'failed';
+                        const isProcessing = report.status === 'processing' || report.status === 'pending';
+                        const statusLabel = isCompleted
+                          ? 'Disponible'
+                          : isFailed
+                            ? 'Échec'
+                            : 'En cours';
+                        const statusClass = isCompleted
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : isFailed
+                            ? 'bg-rose-100 text-rose-800'
+                            : 'bg-amber-100 text-amber-800';
+
+                        return (
+                          <div key={report.id} className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-bold text-sm text-stone-900">
+                                    Semaine du {formatReportDate(report.week_start)} au {formatReportDate(report.week_end)}
+                                  </p>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${statusClass}`}>
+                                    {statusLabel}
+                                  </span>
+                                </div>
+
+                                <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
+                                  {isCompleted && report.summary && (
+                                    <>
+                                      <span>
+                                        CA : <strong className="text-stone-800">
+                                          {formatMoney(report.summary.revenue ?? 0)} {currency}
+                                        </strong>
+                                      </span>
+                                      <span>{report.summary.totalOrders ?? 0} commandes</span>
+                                      <span>{report.summary.paidOrders ?? 0} payées en ligne</span>
+                                    </>
+                                  )}
+                                  {report.generated_at && (
+                                    <span>Généré le {new Date(report.generated_at).toLocaleDateString('fr-FR')}</span>
+                                  )}
+                                  {report.size_bytes ? (
+                                    <span>{Math.max(1, Math.round(report.size_bytes / 1024))} Ko</span>
+                                  ) : null}
+                                  {report.attempts > 1 ? <span>{report.attempts} tentatives</span> : null}
+                                </div>
+
+                                {isFailed && (
+                                  <p className="text-xs text-rose-600 mt-2">
+                                    La génération a échoué. Vous pouvez la relancer sans créer de doublon.
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                {isCompleted && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadReport(report)}
+                                    disabled={downloadingReportId === report.id}
+                                    className="px-4 py-2 bg-stone-900 hover:bg-orange-600 disabled:opacity-60 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                    <span>{downloadingReportId === report.id ? 'Téléchargement...' : 'Télécharger le PDF'}</span>
+                                  </button>
+                                )}
+                                {isFailed && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleGenerateReport(report.week_start)}
+                                    disabled={generatingReport}
+                                    className="px-4 py-2 border border-stone-300 hover:border-orange-500 hover:text-orange-600 disabled:opacity-60 text-stone-700 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors"
+                                  >
+                                    <RefreshCw className="w-4 h-4" />
+                                    <span>Relancer</span>
+                                  </button>
+                                )}
+                                {isProcessing && (
+                                  <span className="text-xs font-semibold text-amber-600">
+                                    Génération en cours...
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               ) : (
                 /* MENU TAB */
                 <div className="space-y-6">
@@ -1190,6 +1434,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   {/* Existing plats list */}
                   <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-xs">
                     <h4 className="font-bold text-sm text-stone-900 mb-3">Plats actuels à la carte ({plats.length})</h4>
+                    {platError && (
+                      <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        <span>{platError}</span>
+                      </div>
+                    )}
                     <div className="divide-y divide-stone-100 max-h-80 overflow-y-auto">
                       {plats.map(p => (
                         <div key={p.id} className="py-2.5 flex items-center justify-between text-xs gap-3">

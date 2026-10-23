@@ -97,3 +97,24 @@ export interface Promotion {
   updated_at?: string;
 }
 
+export interface WeeklyReport {
+  id: string;
+  week_start: string;
+  week_end: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  file_name: string | null;
+  size_bytes: number | null;
+  summary: {
+    revenue?: number;
+    totalOrders?: number;
+    averageOrder?: number;
+    paidOrders?: number;
+    cancelledOrders?: number;
+    paymentsPaid?: number;
+  } | null;
+  generated_at: string | null;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+}
+

@@ -14,5 +14,11 @@
       "source": "/api/(.*)",
       "destination": "/api?__savora_path=$1"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/weekly-reports",
+      "schedule": "0 6 * * 1"
+    }
   ]
 }

@@ -1,4 +1,4 @@
-import type { Category, Plat, RestaurantSettings, AuthUser, DashboardStats, Order, Promotion } from './types';
+import type { Category, Plat, RestaurantSettings, AuthUser, DashboardStats, Order, Promotion, WeeklyReport } from './types';
 
 const BASE_URL = '/api';
 
@@ -280,14 +280,132 @@ export async function createPlat(plat: {
   }
 }
 
-export async function deletePlat(platId: string): Promise<boolean> {
+export async function deletePlat(platId: string): Promise<{ success: boolean; error?: string }> {
   try {
     const res = await fetch(`${BASE_URL}/admin/plats/${platId}`, {
       method: 'DELETE',
     });
-    return res.ok;
+
+    if (res.ok) return { success: true };
+
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    return {
+      success: false,
+      error: data?.error || 'Impossible de supprimer ce plat.',
+    };
   } catch {
-    return false;
+    return {
+      success: false,
+      error: 'Erreur réseau. Vérifiez votre connexion puis réessayez.',
+    };
+  }
+}
+
+// WEEKLY REPORTS
+
+export async function fetchWeeklyReports(): Promise<{
+  success: boolean;
+  reports: WeeklyReport[];
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`${BASE_URL}/admin/reports/weekly`, { cache: 'no-store' });
+    const data = (await res.json().catch(() => null)) as
+      | { reports?: WeeklyReport[]; error?: string }
+      | null;
+
+    if (!res.ok) {
+      return {
+        success: false,
+        reports: [],
+        error: data?.error || 'Impossible de charger les rapports hebdomadaires.',
+      };
+    }
+
+    return { success: true, reports: data?.reports ?? [] };
+  } catch {
+    return {
+      success: false,
+      reports: [],
+      error: 'Erreur réseau. Vérifiez votre connexion puis réessayez.',
+    };
+  }
+}
+
+export async function generateWeeklyReport(weekStart?: string): Promise<{
+  success: boolean;
+  status?: 'generated' | 'skipped';
+  report?: WeeklyReport;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`${BASE_URL}/admin/reports/weekly/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(weekStart ? { weekStart } : {}),
+    });
+    const data = (await res.json().catch(() => null)) as
+      | {
+          status?: 'generated' | 'skipped';
+          report?: WeeklyReport;
+          error?: string;
+        }
+      | null;
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: data?.error || 'Impossible de générer le rapport.',
+      };
+    }
+
+    return {
+      success: true,
+      status: data?.status,
+      report: data?.report,
+    };
+  } catch {
+    return {
+      success: false,
+      error: 'Erreur réseau. Vérifiez votre connexion puis réessayez.',
+    };
+  }
+}
+
+export async function downloadWeeklyReport(reportId: string): Promise<{
+  success: boolean;
+  blob?: Blob;
+  filename?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/admin/reports/weekly/${encodeURIComponent(reportId)}/download`,
+      { cache: 'no-store' },
+    );
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      return {
+        success: false,
+        error: data?.error || 'Impossible de télécharger ce rapport.',
+      };
+    }
+
+    const blob = await res.blob();
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = /filename="([^"]+)"/i.exec(disposition);
+
+    return {
+      success: true,
+      blob,
+      filename: match?.[1] || `savora-rapport-${reportId}.pdf`,
+    };
+  } catch {
+    return {
+      success: false,
+      error: 'Erreur réseau. Vérifiez votre connexion puis réessayez.',
+    };
   }
 }
 
