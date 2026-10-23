@@ -379,29 +379,29 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       <div className="absolute inset-0 bg-stone-900/70 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-4xl bg-white rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-900 text-white">
-          <div className="flex items-center gap-3">
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-stone-200 flex items-center justify-between gap-3 bg-stone-900 text-white">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <img
               src="/logo-savora-sm.png"
               alt="Savora"
               width={40}
               height={40}
-              className="w-10 h-10 rounded-lg bg-white object-contain p-0.5 shrink-0"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-white object-contain p-0.5 shrink-0"
             />
-            <div>
-              <h2 className="font-bold text-base leading-tight">Espace Personnel Savora</h2>
-              <p className="text-xs text-stone-400">
+            <div className="min-w-0">
+              <h2 className="font-bold text-sm sm:text-base leading-tight truncate">Espace Personnel Savora</h2>
+              <p className="text-[11px] sm:text-xs text-stone-400 truncate">
                 {currentUser ? `Bienvenue, ${currentUser.name} (${currentUser.role})` : 'Connexion & Inscription'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             {currentUser && (
               <button
                 onClick={handleLogout}
@@ -422,7 +422,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
         {/* NOT LOGGED IN VIEWS */}
         {!currentUser ? (
-          <div className="p-8 max-w-md mx-auto w-full my-auto">
+          <div className="p-5 sm:p-8 max-w-md mx-auto w-full my-auto">
             {/* RESET PASSWORD MODE */}
             {authMode === 'reset' ? (
               <div className="space-y-4">
@@ -564,7 +564,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   <button
                     type="button"
                     onClick={() => { setAuthMode('login'); setAuthError(''); }}
-                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${authMode === 'login'
+                    className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${authMode === 'login'
                       ? 'bg-white text-stone-900 shadow-sm'
                       : 'text-stone-500 hover:text-stone-900'
                       }`}
@@ -574,7 +574,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   <button
                     type="button"
                     onClick={() => { setAuthMode('register'); setAuthError(''); setRegisterSuccessMsg(null); }}
-                    className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${authMode === 'register'
+                    className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${authMode === 'register'
                       ? 'bg-white text-stone-900 shadow-sm'
                       : 'text-stone-500 hover:text-stone-900'
                       }`}
@@ -586,7 +586,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 {/* Google Sign-in Button */}
                 <a
                   href="/api/auth/google"
-                  className="w-full flex items-center justify-center gap-3 bg-white hover:bg-stone-50 text-stone-800 font-semibold py-2.5 px-4 rounded-xl border border-stone-300 shadow-xs transition-all text-sm mb-4 cursor-pointer"
+                  className="w-full flex items-center justify-center gap-3 bg-white hover:bg-stone-50 text-stone-800 font-semibold py-2.5 px-4 min-h-11 rounded-xl border border-stone-300 shadow-xs transition-all text-sm mb-4 cursor-pointer"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
@@ -766,7 +766,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           </div>
         ) : currentUser.role === 'customer' ? (
           /* SIMPLE CLIENT PROFILE VIEW */
-          <div className="p-8 max-w-md mx-auto w-full my-auto text-center space-y-4">
+          <div className="p-5 sm:p-8 max-w-md mx-auto w-full my-auto text-center space-y-4">
             <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
               <UserCheck className="w-8 h-8" />
             </div>
@@ -787,10 +787,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           /* STAFF / OWNER DASHBOARD */
           <div className="flex-1 flex flex-col min-h-0">
             {/* Tabs Bar */}
-            <div className="flex border-b border-stone-200 bg-stone-50 px-6 gap-2 overflow-x-auto">
+            <div className="flex border-b border-stone-200 bg-stone-50 px-2 sm:px-6 gap-1 sm:gap-2 overflow-x-auto scrollbar-none">
               <button
                 onClick={() => setTab('stats')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'stats'
+                className={`py-3 px-3 sm:px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'stats'
                   ? 'border-orange-600 text-orange-600'
                   : 'border-transparent text-stone-500 hover:text-stone-900'
                   }`}
@@ -800,7 +800,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               </button>
               <button
                 onClick={() => setTab('orders')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'orders'
+                className={`py-3 px-3 sm:px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'orders'
                   ? 'border-orange-600 text-orange-600'
                   : 'border-transparent text-stone-500 hover:text-stone-900'
                   }`}
@@ -810,7 +810,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               </button>
               <button
                 onClick={() => setTab('menu')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'menu'
+                className={`py-3 px-3 sm:px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'menu'
                   ? 'border-orange-600 text-orange-600'
                   : 'border-transparent text-stone-500 hover:text-stone-900'
                   }`}
@@ -820,7 +820,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               </button>
               <button
                 onClick={() => setTab('promos')}
-                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'promos'
+                className={`py-3 px-3 sm:px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${tab === 'promos'
                   ? 'border-orange-600 text-orange-600'
                   : 'border-transparent text-stone-500 hover:text-stone-900'
                   }`}
@@ -831,7 +831,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             </div>
 
             {/* Tab Contents */}
-            <div className="flex-1 overflow-y-auto p-6 bg-stone-50/50">
+            <div key={tab} className="flex-1 overflow-y-auto p-4 sm:p-6 bg-stone-50/50">
               {loadingData ? (
                 <div className="text-center py-12 text-stone-400 text-sm">
                   Chargement des données...
@@ -839,27 +839,27 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               ) : tab === 'stats' ? (
                 <div className="space-y-6">
                   {/* Summary metric cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                    <div className="bg-white p-3 sm:p-4 rounded-2xl border border-stone-200 shadow-xs">
                       <p className="text-xs font-medium text-stone-500">Chiffre d'affaires</p>
-                      <p className="text-xl font-black text-stone-900 mt-1">
+                      <p className="text-lg sm:text-xl font-black text-stone-900 mt-1">
                         {formatMoney(summary.revenue)} <span className="text-xs font-semibold text-stone-500">{currency}</span>
                       </p>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs">
+                    <div className="bg-white p-3 sm:p-4 rounded-2xl border border-stone-200 shadow-xs">
                       <p className="text-xs font-medium text-stone-500">Total Commandes</p>
-                      <p className="text-xl font-black text-stone-900 mt-1">{summary.totalOrders}</p>
+                      <p className="text-lg sm:text-xl font-black text-stone-900 mt-1">{summary.totalOrders}</p>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs">
+                    <div className="bg-white p-3 sm:p-4 rounded-2xl border border-stone-200 shadow-xs">
                       <p className="text-xs font-medium text-stone-500">En attente / Cuisine</p>
-                      <p className="text-xl font-black text-amber-600 mt-1">{summary.pendingOrders}</p>
+                      <p className="text-lg sm:text-xl font-black text-amber-600 mt-1">{summary.pendingOrders}</p>
                     </div>
 
-                    <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs">
+                    <div className="bg-white p-3 sm:p-4 rounded-2xl border border-stone-200 shadow-xs">
                       <p className="text-xs font-medium text-stone-500">Livrées avec succès</p>
-                      <p className="text-xl font-black text-emerald-600 mt-1">{summary.deliveredOrders}</p>
+                      <p className="text-lg sm:text-xl font-black text-emerald-600 mt-1">{summary.deliveredOrders}</p>
                     </div>
                   </div>
 
@@ -869,9 +869,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       <h4 className="font-bold text-sm text-stone-900 mb-3">Plats les plus commandés</h4>
                       <div className="space-y-2">
                         {stats.popularPlats.map((p, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs py-1.5 border-b border-stone-100 last:border-0">
+                          <div key={idx} className="flex flex-wrap justify-between items-center gap-2 text-xs py-1.5 border-b border-stone-100 last:border-0">
                             <span className="font-medium text-stone-800">{p.name}</span>
-                            <div className="flex gap-4 text-stone-500">
+                            <div className="flex gap-3 sm:gap-4 text-stone-500">
                               <span><strong>{p.total_sold}</strong> vendus</span>
                               <span className="font-semibold text-stone-900">{formatMoney(p.total_revenue)} {currency}</span>
                             </div>
@@ -899,7 +899,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             </span>
                           </div>
 
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${order.status === 'confirmed' ? 'bg-amber-100 text-amber-800' :
                               order.status === 'preparing' ? 'bg-blue-100 text-blue-800' :
                                 order.status === 'ready' ? 'bg-purple-100 text-purple-800' :
@@ -964,7 +964,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               ) : tab === 'promos' ? (
                 /* PROMOTIONS TAB */
                 <div className="space-y-4">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-4 rounded-2xl border border-stone-200 shadow-xs">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 sm:p-4 rounded-2xl border border-stone-200 shadow-xs">
                     <div className="relative flex-1 w-full sm:max-w-xs">
                       <Search className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
                       <input
@@ -1035,7 +1035,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               }`}
                           >
                             <div className="space-y-1">
-                              <div className="flex items-center gap-3">
+                              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                                 <span className="font-mono text-base font-black text-stone-900 tracking-wider">
                                   {promo.code}
                                 </span>
@@ -1208,7 +1208,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           </div>
                           <button
                             onClick={() => handleDeletePlat(p.id)}
-                            className="text-stone-400 hover:text-rose-600 font-semibold p-1 shrink-0 cursor-pointer"
+                            className="text-stone-400 hover:text-rose-600 font-semibold p-2 -mr-1 shrink-0 cursor-pointer"
                           >
                             Supprimer
                           </button>
@@ -1224,9 +1224,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
         {/* PROMO CREATION / EDIT MODAL */}
         {isPromoModalOpen && editingPromo && (
-          <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
             <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-xs" onClick={() => setIsPromoModalOpen(false)} />
-            <div className="relative w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="relative w-full max-w-lg bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between border-b border-stone-100 pb-3">
                 <h3 className="font-bold text-base text-stone-900">
                   {editingPromo.id ? 'Modifier le code promo' : 'Créer un code promo'}
@@ -1272,7 +1272,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-stone-700 mb-1">Type de réduction</label>
                     <select
@@ -1315,7 +1315,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-stone-700 mb-1">Nombre max. d'utilisations (total)</label>
                     <input
@@ -1340,7 +1340,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block font-semibold text-stone-700 mb-1">Date de début</label>
                     <input

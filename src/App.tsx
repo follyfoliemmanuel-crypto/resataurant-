@@ -212,20 +212,20 @@ export function App() {
       />
 
       {/* Main Menu Section */}
-      <main id="menu-section" className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-14 w-full">
-        <div className="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+      <main id="menu-section" className="flex-1 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-10 sm:py-14 w-full">
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between mb-6 sm:mb-8 gap-4">
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-bold text-orange-600 uppercase tracking-widest mb-1.5">
               <Sparkles className="w-3.5 h-3.5" />
               <span>Notre Carte du Jour</span>
             </div>
-            <h2 className="text-3xl font-black text-stone-900 tracking-tight">
+            <h2 className="text-2xl sm:text-3xl font-black text-stone-900 tracking-tight">
               Faits maison avec passion
             </h2>
           </div>
 
           {/* Category Filter Pills */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-none">
             <button
               onClick={() => setSelectedCategory('all')}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
@@ -254,18 +254,18 @@ export function App() {
 
         {/* Dish Grid with photos */}
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {[1, 2, 3, 4, 5, 6].map(n => (
               <div key={n} className="bg-white rounded-2xl p-5 border border-stone-200 animate-pulse h-64" />
             ))}
           </div>
         ) : filteredPlats.length === 0 ? (
-          <div className="bg-white rounded-3xl border border-stone-200 p-12 text-center text-stone-400">
+          <div className="bg-white rounded-3xl border border-stone-200 p-8 sm:p-12 text-center text-stone-400">
             <p className="font-semibold text-stone-600 text-base">Aucun plat dans cette sélection</p>
             <p className="text-xs text-stone-400 mt-1">Sélectionnez une autre catégorie pour explorer le menu.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 animate-fade-in">
             {filteredPlats.map(plat => (
               <PlatCard
                 key={plat.id}
@@ -279,9 +279,9 @@ export function App() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-stone-900 text-white border-t border-stone-800 py-12 mt-auto">
+      <footer className="bg-stone-900 text-white border-t border-stone-800 py-10 sm:py-12 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-8">
             <div>
               <div className="flex items-center gap-3 mb-3">
                 <img
@@ -291,7 +291,7 @@ export function App() {
                   height={48}
                   className="w-12 h-12 rounded-xl bg-white object-contain p-0.5 shrink-0"
                 />
-                <h4 className="text-lg font-bold">{restaurant?.restaurant_name || 'Savora'}</h4>
+                <h4 className="text-lg font-bold break-words">{restaurant?.restaurant_name || 'Savora'}</h4>
               </div>
               <p className="text-xs text-stone-400 leading-relaxed">
                 {restaurant?.description || 'Plateforme de commande et de gestion de restaurant haut de gamme.'}
@@ -302,21 +302,21 @@ export function App() {
               <h4 className="text-sm font-bold text-stone-200 mb-3 uppercase tracking-wider">Contact & Coordonnées</h4>
               <ul className="space-y-2 text-xs text-stone-400">
                 {restaurant?.address && (
-                  <li className="flex items-center gap-2">
-                    <MapPin className="w-3.5 h-3.5 text-orange-500" />
-                    <span>{restaurant.address}, {restaurant.city}</span>
+                  <li className="flex items-start gap-2">
+                    <MapPin className="w-3.5 h-3.5 text-orange-500 shrink-0 mt-0.5" />
+                    <span className="min-w-0 break-words">{restaurant.address}, {restaurant.city}</span>
                   </li>
                 )}
                 {restaurant?.phone && (
                   <li className="flex items-center gap-2">
-                    <Phone className="w-3.5 h-3.5 text-orange-500" />
-                    <span>{restaurant.phone}</span>
+                    <Phone className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                    <span className="min-w-0 break-words">{restaurant.phone}</span>
                   </li>
                 )}
                 {restaurant?.email && (
                   <li className="flex items-center gap-2">
-                    <Mail className="w-3.5 h-3.5 text-orange-500" />
-                    <span>{restaurant.email}</span>
+                    <Mail className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                    <span className="min-w-0 break-all">{restaurant.email}</span>
                   </li>
                 )}
               </ul>
@@ -369,9 +369,9 @@ export function App() {
 
       {/* Order Confirmation Modal */}
       {orderConfirmation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
           <div className="absolute inset-0 bg-stone-900/60 backdrop-blur-xs" onClick={() => setOrderConfirmation(null)} />
-          <div className="relative bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center">
+          <div className="relative bg-white rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl text-center max-h-[90vh] overflow-y-auto">
             <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 className="w-8 h-8" />
             </div>

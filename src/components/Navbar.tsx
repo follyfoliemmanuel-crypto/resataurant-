@@ -26,30 +26,32 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-stone-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-2 h-16 sm:h-20">
           {/* Logo & Restaurant */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <img
               src="/logo-savora-sm.png"
               alt="Savora"
               width={64}
               height={64}
-              className="w-14 h-14 sm:w-16 sm:h-16 object-contain shrink-0"
+              className="w-10 h-10 sm:w-14 sm:h-14 md:w-16 md:h-16 object-contain shrink-0"
             />
-            <div>
-              <span className="text-xl font-bold tracking-tight text-stone-900 block leading-tight">
+            <div className="min-w-0">
+              <span className="text-sm sm:text-xl font-bold tracking-tight text-stone-900 block leading-tight truncate max-w-[7.5rem] sm:max-w-none">
                 {restaurant?.restaurant_name || 'Savora'}
               </span>
-              <span className="text-xs font-medium text-stone-500 flex items-center gap-1.5">
-                <MapPin className="w-3 h-3 text-orange-600" />
-                {restaurant?.city ? `${restaurant.city} • Ouvert` : 'Cuisine & Grillades'}
+              <span className="text-[10px] sm:text-xs font-medium text-stone-500 flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-orange-600 shrink-0" />
+                <span className="truncate">
+                  {restaurant?.city ? `${restaurant.city} • Ouvert` : 'Cuisine & Grillades'}
+                </span>
               </span>
             </div>
           </div>
 
           {/* Quick contact */}
-          <div className="hidden md:flex items-center gap-6 text-sm font-medium text-stone-600">
+          <div className="hidden lg:flex items-center gap-6 text-sm font-medium text-stone-600">
             {restaurant?.phone && (
               <a
                 href={`tel:${restaurant.phone}`}
@@ -66,19 +68,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* User Auth Buttons & Cart */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {currentUser ? (
               /* User logged in */
               <div className="relative">
                 <button
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-xs font-semibold text-stone-800 transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 text-xs font-semibold text-stone-800 transition-all cursor-pointer"
                 >
-                  <div className="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center text-[10px] font-bold">
+                  <div className="w-6 h-6 rounded-full bg-orange-600 text-white flex items-center justify-center text-[10px] font-bold shrink-0">
                     {(currentUser.name || currentUser.email || '?').charAt(0).toUpperCase()}
                   </div>
-                  <span className="max-w-[100px] truncate">{currentUser.name}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-stone-400" />
+                  <span className="hidden min-[380px]:inline max-w-[70px] sm:max-w-[100px] truncate">{currentUser.name}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                 </button>
 
                 {userMenuOpen && (
@@ -117,21 +119,25 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             ) : (
               /* User not logged in: Se connecter / S'inscrire */
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 sm:gap-2">
                 <button
                   onClick={() => onOpenAuth('login')}
-                  className="text-stone-700 hover:text-orange-600 text-xs font-bold px-3 py-2 rounded-xl hover:bg-stone-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                  aria-label="Se connecter"
+                  title="Se connecter"
+                  className="text-stone-700 hover:text-orange-600 text-xs font-bold p-2 md:px-3 md:py-2 rounded-xl hover:bg-stone-100 transition-all flex items-center gap-1.5 cursor-pointer"
                 >
-                  <LogIn className="w-3.5 h-3.5" />
-                  <span>Se connecter</span>
+                  <LogIn className="w-4 h-4 md:w-3.5 md:h-3.5" />
+                  <span className="hidden md:inline">Se connecter</span>
                 </button>
 
                 <button
                   onClick={() => onOpenAuth('register')}
-                  className="bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  aria-label="S'inscrire"
+                  title="S'inscrire"
+                  className="bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold p-2 md:px-3.5 md:py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>S’inscrire</span>
+                  <UserPlus className="w-4 h-4 md:w-3.5 md:h-3.5" />
+                  <span className="hidden md:inline">S’inscrire</span>
                 </button>
               </div>
             )}
@@ -139,7 +145,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Cart Button */}
             <button
               onClick={onOpenCart}
-              className="relative flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-3.5 py-2 rounded-xl font-medium transition-all shadow-sm active:scale-95 cursor-pointer ml-1"
+              aria-label={`Ouvrir le panier${cartCount > 0 ? ` (${cartCount} article${cartCount > 1 ? 's' : ''})` : ''}`}
+              className="relative flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-2.5 sm:px-3.5 py-2 min-h-10 rounded-xl font-medium transition-all shadow-sm active:scale-95 cursor-pointer ml-0.5 sm:ml-1"
             >
               <ShoppingBag className="w-4 h-4" />
               <span className="text-xs font-bold hidden sm:inline">Panier</span>

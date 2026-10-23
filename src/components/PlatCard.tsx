@@ -15,7 +15,7 @@ export const PlatCard: React.FC<PlatCardProps> = ({ plat, currency, onAddToCart 
   return (
     <div className="group bg-white rounded-2xl border border-stone-200/90 hover:border-orange-200 hover:shadow-xl hover:shadow-orange-500/5 transition-all duration-300 flex flex-col justify-between overflow-hidden">
       {/* Photo du plat */}
-      <div className="relative w-full h-48 bg-stone-100 overflow-hidden">
+      <div className="relative w-full h-44 sm:h-48 bg-stone-100 overflow-hidden">
         {plat.image_url && !imageError ? (
           <img
             src={plat.image_url}
@@ -41,13 +41,13 @@ export const PlatCard: React.FC<PlatCardProps> = ({ plat, currency, onAddToCart 
       </div>
 
       {/* Informations */}
-      <div className="p-5 flex-1 flex flex-col justify-between">
+      <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
         <div>
-          <h3 className="font-bold text-stone-900 text-lg leading-snug group-hover:text-orange-600 transition-colors mb-1.5">
+          <h3 className="font-bold text-stone-900 text-base sm:text-lg leading-snug group-hover:text-orange-600 transition-colors mb-1.5 break-words">
             {plat.name}
           </h3>
 
-          <p className="text-xs text-stone-500 line-clamp-2 leading-relaxed mb-4">
+          <p className="text-xs text-stone-500 line-clamp-2 leading-relaxed mb-4 break-words">
             {plat.description || 'Préparé avec soin par notre brigade avec des ingrédients frais de saison.'}
           </p>
         </div>
@@ -55,14 +55,14 @@ export const PlatCard: React.FC<PlatCardProps> = ({ plat, currency, onAddToCart 
         <div className="pt-4 border-t border-stone-100 flex items-center justify-between mt-auto">
           <div className="flex flex-col">
             <span className="text-[10px] text-stone-400 font-bold uppercase tracking-wider">Prix</span>
-            <span className="text-lg font-extrabold text-stone-900">
+            <span className="text-base sm:text-lg font-extrabold text-stone-900">
               {formattedPrice} <span className="text-xs font-semibold text-stone-500">{currency}</span>
             </span>
           </div>
 
           <button
             onClick={() => onAddToCart(plat)}
-            className="bg-stone-900 hover:bg-orange-600 text-white p-2.5 rounded-xl font-semibold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+            className="bg-stone-900 hover:bg-orange-600 text-white px-3 py-2.5 min-h-11 rounded-xl font-semibold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
             title="Ajouter au panier"
           >
             <Plus className="w-4 h-4" />
