@@ -57,6 +57,13 @@ describe("SEO technique", () => {
     assert.equal(canonical, "https://resataurant-savora.vercel.app/");
   });
 
+  test("la balise de vérification Google Search Console est présente", () => {
+    assert.equal(
+      meta('name="google-site-verification"'),
+      "s1FhGG_XGW0ZeiVCJcaZlKN8iuO9PtUSeEDs2KW8j2I",
+    );
+  });
+
   test("le titre et la description sont courts et décrivent Savora", () => {
     const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
     const description = meta('name="description"') ?? "";
