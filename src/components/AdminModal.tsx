@@ -5,9 +5,10 @@ import {
   X, LogOut, TrendingUp, ShoppingBag,
   Plus, AlertCircle, ImageIcon, Utensils, UserCheck,
   Tag, Search, Edit2, Trash2, Check, ArrowLeft, KeyRound,
-  FileText, Download, RefreshCw
+  FileText, Download, RefreshCw, Upload
 } from 'lucide-react';
 import type { AuthUser, DashboardStats, Order, Category, Plat, Promotion, WeeklyReport } from '../types';
+import { fileToOptimizedDataUrl } from '../lib/image';
 import {
   login, createAccount, verifyCode, logout, fetchAdminStats, fetchAdminOrders,
   updateOrderStatus, createPlat, deletePlat, validatePassword,
@@ -74,12 +75,16 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [promoFormError, setPromoFormError] = useState('');
   const [isSavingPromo, setIsSavingPromo] = useState(false);
 
-  // New Plat Form (with photo URL)
+  // New Plat Form (photo par URL ou fichier importé)
   const [newPlatName, setNewPlatName] = useState('');
   const [newPlatCat, setNewPlatCat] = useState('');
   const [newPlatPrice, setNewPlatPrice] = useState('');
   const [newPlatDesc, setNewPlatDesc] = useState('');
   const [newPlatImage, setNewPlatImage] = useState('');
+  const [newPlatImageFile, setNewPlatImageFile] = useState<File | null>(null);
+  const [newPlatImagePreview, setNewPlatImagePreview] = useState('');
+  const [newPlatImageError, setNewPlatImageError] = useState('');
+  const [platFormError, setPlatFormError] = useState('');
   const [newPlatPopular, setNewPlatPopular] = useState(false);
   const [creatingPlat, setCreatingPlat] = useState(false);
   const [platError, setPlatError] = useState('');
@@ -101,6 +106,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setAuthMode('reset');
     }
   }, [resetToken]);
+
+  useEffect(() => {
+    return () => {
+      if (newPlatImagePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(newPlatImagePreview);
+      }
+    };
+  }, [newPlatImagePreview]);
 
   useEffect(() => {
     if (isOpen && currentUser && currentUser.role !== 'customer') {
@@ -293,26 +306,98 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const handleCreatePlat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPlatName || !newPlatPrice || !newPlatCat) return;
+
     setCreatingPlat(true);
-    const success = await createPlat({
-      categoryId: newPlatCat,
-      name: newPlatName.trim(),
-      description: newPlatDesc.trim(),
-      price: Number(newPlatPrice),
-      imageUrl: newPlatImage.trim() || undefined,
-      isAvailable: true,
-      isPopular: newPlatPopular,
-    });
-    setCreatingPlat(false);
-    if (success) {
+    setPlatFormError('');
+    setNewPlatImageError('');
+
+    try {
+      let imageDataUrl: string | undefined;
+
+      if (newPlatImageFile) {
+        try {
+          imageDataUrl = await fileToOptimizedDataUrl(newPlatImageFile);
+        } catch (error) {
+          setNewPlatImageError(
+            error instanceof Error
+              ? error.message
+              : "Impossible de préparer cette photo. Essayez un autre fichier.",
+          );
+          return;
+        }
+      }
+
+      const result = await createPlat({
+        categoryId: newPlatCat,
+        name: newPlatName.trim(),
+        description: newPlatDesc.trim(),
+        price: Number(newPlatPrice),
+        imageUrl: imageDataUrl ? undefined : newPlatImage.trim() || undefined,
+        imageDataUrl,
+        isAvailable: true,
+        isPopular: newPlatPopular,
+      });
+
+      if (!result.success) {
+        setPlatFormError(result.error ?? "Impossible d'ajouter ce plat.");
+        return;
+      }
+
       setNewPlatName('');
       setNewPlatPrice('');
       setNewPlatDesc('');
       setNewPlatImage('');
+      setNewPlatImageFile(null);
+      setNewPlatImagePreview('');
+      setNewPlatImageError('');
       setNewPlatPopular(false);
       setPlatError('');
+      setPlatFormError('');
       onRefreshMenu();
+    } finally {
+      setCreatingPlat(false);
     }
+  };
+
+  const handlePlatImageSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Permet de re-sélectionner le même fichier après une erreur.
+    event.target.value = '';
+    if (!file) return;
+
+    if (file.type === 'image/svg+xml') {
+      setNewPlatImageError("Le format SVG n'est pas accepté. Utilisez JPG, PNG, WebP ou GIF.");
+      return;
+    }
+    if (file.type && !file.type.startsWith('image/')) {
+      setNewPlatImageError('Choisissez un fichier image (JPG, PNG, WebP ou GIF).');
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setNewPlatImageError('Cette photo est trop lourde (maximum 25 Mo).');
+      return;
+    }
+
+    setNewPlatImageError('');
+    setNewPlatImageFile(file);
+    setNewPlatImage('');
+    setNewPlatImagePreview(URL.createObjectURL(file));
+  };
+
+  const handlePlatImageUrlChange = (value: string) => {
+    setNewPlatImage(value);
+    setNewPlatImageError('');
+    if (value.trim()) {
+      setNewPlatImageFile(null);
+      setNewPlatImagePreview('');
+    }
+  };
+
+  const clearPlatImage = () => {
+    setNewPlatImage('');
+    setNewPlatImageFile(null);
+    setNewPlatImagePreview('');
+    setNewPlatImageError('');
   };
 
   const handleDeletePlat = async (id: string) => {
@@ -1384,18 +1469,79 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2"
                         />
                       </div>
-                      <div>
-                        <label className="block font-semibold text-stone-700 mb-1 flex items-center gap-1">
-                          <ImageIcon className="w-3.5 h-3.5 text-stone-500" />
-                          <span>Lien URL de la Photo</span>
-                        </label>
+                      <div className="sm:col-span-2 rounded-2xl border border-stone-200 bg-stone-50/70 p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <label htmlFor="plat-photo-url" className="flex items-center gap-1 font-semibold text-stone-700">
+                              <ImageIcon className="w-3.5 h-3.5 text-stone-500" />
+                              <span>Photo du plat <span className="font-normal text-stone-400">(optionnel)</span></span>
+                            </label>
+                            <p className="mt-0.5 text-[11px] text-stone-500">
+                              Collez un lien ou choisissez une photo depuis votre appareil.
+                            </p>
+                          </div>
+                          <div>
+                            <input
+                              id="plat-photo-input"
+                              type="file"
+                              accept="image/*"
+                              className="sr-only"
+                              onChange={handlePlatImageSelected}
+                            />
+                            <label
+                              htmlFor="plat-photo-input"
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 py-2 font-bold text-stone-700 shadow-xs hover:border-orange-300 hover:text-orange-700 cursor-pointer transition-colors"
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              <span>{newPlatImageFile ? 'Remplacer la photo' : 'Choisir une photo'}</span>
+                            </label>
+                          </div>
+                        </div>
                         <input
+                          id="plat-photo-url"
                           type="url"
                           value={newPlatImage}
-                          onChange={e => setNewPlatImage(e.target.value)}
+                          onChange={e => handlePlatImageUrlChange(e.target.value)}
                           placeholder="https://images.unsplash.com/..."
-                          className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2"
+                          className="mt-2 w-full bg-white border border-stone-200 rounded-xl px-3 py-2"
                         />
+                        {newPlatImageError && (
+                          <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span>{newPlatImageError}</span>
+                          </div>
+                        )}
+                        {(newPlatImagePreview || newPlatImage) && (
+                          <div className="mt-2 flex items-center gap-3 rounded-xl border border-stone-200 bg-white p-2">
+                            <img
+                              src={newPlatImagePreview || newPlatImage}
+                              alt="Aperçu de la photo du plat"
+                              className="w-14 h-14 rounded-lg object-cover bg-stone-100 shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate font-semibold text-stone-700">
+                                {newPlatImageFile?.name || 'Photo via un lien'}
+                              </p>
+                              <p className="text-[11px] text-stone-400">
+                                {newPlatImageFile
+                                  ? `${Math.max(1, Math.round(newPlatImageFile.size / 1024))} Ko — optimisée automatiquement`
+                                  : 'Aperçu du lien'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={clearPlatImage}
+                              className="p-2 rounded-lg text-stone-400 hover:bg-rose-50 hover:text-rose-600 cursor-pointer transition-colors"
+                              title="Retirer la photo"
+                              aria-label="Retirer la photo"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                        <p className="mt-2 text-[11px] text-stone-400">
+                          JPG, PNG, WebP ou GIF. La photo est redimensionnée et compressée avant l'envoi.
+                        </p>
                       </div>
                       <div className="flex items-center gap-2 sm:col-span-2">
                         <input
@@ -1419,6 +1565,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2"
                         />
                       </div>
+                      {platFormError && (
+                        <div className="sm:col-span-2 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>{platFormError}</span>
+                        </div>
+                      )}
                       <div className="sm:col-span-2 text-right">
                         <button
                           type="submit"

@@ -265,18 +265,29 @@ export async function createPlat(plat: {
   description: string;
   price: number;
   imageUrl?: string;
+  imageDataUrl?: string;
   isAvailable: boolean;
   isPopular: boolean;
-}): Promise<boolean> {
+}): Promise<{ success: boolean; error?: string }> {
   try {
     const res = await fetch(`${BASE_URL}/admin/plats`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(plat),
     });
-    return res.ok;
+
+    if (res.ok) return { success: true };
+
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    return {
+      success: false,
+      error: data?.error || "Impossible d'ajouter ce plat.",
+    };
   } catch {
-    return false;
+    return {
+      success: false,
+      error: 'Erreur réseau. Vérifiez votre connexion puis réessayez.',
+    };
   }
 }
 

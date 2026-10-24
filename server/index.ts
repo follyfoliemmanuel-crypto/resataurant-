@@ -42,6 +42,7 @@ import {
   periodFromWeekStart,
   previousWeekPeriod,
 } from "./lib/reports.js";
+import { normalizeImageUrl, parseImageDataUrl } from "./lib/images.js";
 
 const MAX_BODY_SIZE = 1024 * 1024; // 1 Mo max body
 
@@ -255,6 +256,44 @@ export const server = http.createServer(async (req, res) => {
           },
           result.failed === 0 ? 200 : 500,
         ),
+      );
+    }
+
+    // --- PUBLIC DISH IMAGE ---
+    // Les photos importées sont stockées dans Neon et servies par une URL
+    // stable. L'URL contient un UUID non devinable et est immuable.
+    const platImageMatch = pathname.match(
+      /^\/api\/plat-images\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+    );
+    if (req.method === "GET" && platImageMatch) {
+      const imageRes = await query<{ mime_type: string; data: Buffer }>(
+        `SELECT mime_type, data
+         FROM plat_images
+         WHERE id = $1
+         LIMIT 1`,
+        [platImageMatch[1]],
+      );
+      const image = imageRes.rows[0];
+
+      if (!image) {
+        return sendResponse(
+          res,
+          json({ error: "Image introuvable.", code: "not_found" }, 404),
+        );
+      }
+
+      const data = Buffer.isBuffer(image.data) ? image.data : Buffer.from(image.data);
+      return sendResponse(
+        res,
+        new Response(new Uint8Array(data), {
+          status: 200,
+          headers: {
+            "content-type": image.mime_type,
+            "content-length": String(data.length),
+            "cache-control": "public, max-age=31536000, immutable",
+            "x-content-type-options": "nosniff",
+          },
+        }),
       );
     }
 
@@ -1888,29 +1927,65 @@ export const server = http.createServer(async (req, res) => {
         description,
         price,
         imageUrl,
+        imageDataUrl,
         isAvailable,
         isPopular,
       } = body;
 
-      const ins = await query(
-        `INSERT INTO plats
-          (restaurant_id, category_id, name, description, price,
-           image_url, is_available, is_popular)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING *`,
-        [
-          ctx.restaurantId,
-          categoryId,
-          name,
-          description,
-          price,
-          imageUrl ?? null,
-          isAvailable ?? true,
-          isPopular ?? false,
-        ],
-      );
+      // Nouveau client : `imageDataUrl` (photo choisie sur l'appareil).
+      // Ancien client : `imageUrl` (lien externe ou éventuellement data URL).
+      const candidateImageDataUrl =
+        typeof imageDataUrl === "string" && imageDataUrl.trim()
+          ? imageDataUrl
+          : typeof imageUrl === "string" &&
+              imageUrl.trim().toLowerCase().startsWith("data:image/")
+            ? imageUrl
+            : undefined;
+      const parsedImage = candidateImageDataUrl
+        ? parseImageDataUrl(candidateImageDataUrl)
+        : null;
+      const externalImageUrl = parsedImage ? null : normalizeImageUrl(imageUrl);
 
-      return sendResponse(res, json({ plat: ins.rows[0] }, 201));
+      const plat = await withTransaction(async (client) => {
+        let resolvedImageUrl = externalImageUrl;
+
+        if (parsedImage) {
+          const image = await client.query<{ id: string }>(
+            `INSERT INTO plat_images (restaurant_id, mime_type, data, size_bytes)
+             VALUES ($1, $2, $3, $4)
+             RETURNING id`,
+            [
+              ctx.restaurantId,
+              parsedImage.mimeType,
+              parsedImage.data,
+              parsedImage.data.length,
+            ],
+          );
+          resolvedImageUrl = `/api/plat-images/${image.rows[0].id}`;
+        }
+
+        const ins = await client.query(
+          `INSERT INTO plats
+            (restaurant_id, category_id, name, description, price,
+             image_url, is_available, is_popular)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING *`,
+          [
+            ctx.restaurantId,
+            categoryId,
+            name,
+            description,
+            price,
+            resolvedImageUrl ?? null,
+            isAvailable ?? true,
+            isPopular ?? false,
+          ],
+        );
+
+        return ins.rows[0];
+      });
+
+      return sendResponse(res, json({ plat }, 201));
     }
 
     // --- ADMIN: DELETE DISH ---

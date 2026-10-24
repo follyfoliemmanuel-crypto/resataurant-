@@ -84,6 +84,19 @@ un PDF couvrant la semaine précédente (lundi → dimanche, bornes UTC).
   `POST /api/admin/reports/weekly/generate` (session staff + permission
   `statistics`).
 
+## Photos des plats
+
+Depuis le formulaire **Ajouter un plat**, une photo peut être fournie de deux façons :
+
+- coller une URL (`imageUrl`) ;
+- choisir un fichier depuis la galerie ou le système de fichiers de l'appareil
+  (`imageDataUrl`), avec redimensionnement et compression dans le navigateur.
+
+Les fichiers importés sont stockés dans Neon, table `plat_images` (`data` en
+`BYTEA`), puis servis par `GET /api/plat-images/:id`. Le serveur vérifie le type
+MIME, la taille et la signature binaire ; les formats acceptés sont JPG, PNG,
+WebP et GIF. Les images sont mises en cache de façon immuable.
+
 ## Déploiement sur Vercel
 
 1. Importer le dépôt dans Vercel (framework détecté : **Vite**).
@@ -93,7 +106,7 @@ un PDF couvrant la semaine précédente (lundi → dimanche, bornes UTC).
    `CRON_SECRET`.
 3. Appliquer les migrations sur la base distante **depuis votre machine** :
    `npm run migrate` (le build Vercel ne touche pas à la base). Cette étape crée
-   notamment la table `weekly_reports`.
+   notamment les tables `weekly_reports` et `plat_images`.
 4. Déployer. Le front est servi depuis `dist/`, et `api/index.ts` expose toutes
    les routes `/api/*` dans une fonction serverless (aucun port ouvert).
 5. Vérifier `https://<projet>.vercel.app/api/health` → `200 {"status":"ok","db":"ok","config":"ok"}`.
@@ -127,7 +140,7 @@ api/[...path].ts      point d'entrée serverless → serveur HTTP
 server/index.ts       routes API + serveur
 server/context.ts     session, permissions, CSRF
 server/lib/           crypto, db, http, mail, pricing, rate-limit, config, health
-database/migrations/  schéma SQL (001 → 011)
+database/migrations/  schéma SQL (001 → 012)
 src/                  application React
 tests/                tests unitaires
 ```
