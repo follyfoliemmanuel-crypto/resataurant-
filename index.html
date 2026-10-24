@@ -2,16 +2,19 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="256x256" href="/logo-savora-sm.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; connect-src 'self' https: ws: wss:; font-src 'self'; object-src 'none'; base-uri 'self'; require-trusted-types-for 'script';" />
-    <meta name="description" content="Commandez en ligne, suivez vos commandes et gérez votre restaurant avec Savora." />
+    <link rel="canonical" href="https://resataurant-savora.vercel.app/" />
+    <meta name="description" content="Commandez en ligne chez Savora Restaurant &amp; Grill à Lomé : plats faits maison, carte du jour, livraison ou retrait. Gérez aussi votre restaurant." />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <!-- Open Graph / réseaux sociaux -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Savora" />
     <meta property="og:locale" content="fr_FR" />
-    <meta property="og:title" content="Savora — Restaurant &amp; Grill" />
-    <meta property="og:description" content="Commandez en ligne, suivez vos commandes et découvrez la carte du jour. Livraison et à emporter." />
+    <meta property="og:title" content="Savora — Restaurant &amp; Grill à Lomé" />
+    <meta property="og:description" content="Commandez en ligne chez Savora Restaurant &amp; Grill à Lomé : plats faits maison, carte du jour, livraison ou retrait. Gérez aussi votre restaurant." />
     <meta property="og:url" content="https://resataurant-savora.vercel.app/" />
     <meta property="og:image" content="https://resataurant-savora.vercel.app/og-image.png" />
     <meta property="og:image:secure_url" content="https://resataurant-savora.vercel.app/og-image.png" />
@@ -22,13 +25,95 @@
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Savora — Restaurant &amp; Grill" />
-    <meta name="twitter:description" content="Commandez en ligne, suivez vos commandes et découvrez la carte du jour. Livraison et à emporter." />
+    <meta name="twitter:title" content="Savora — Restaurant &amp; Grill à Lomé" />
+    <meta name="twitter:description" content="Commandez en ligne chez Savora Restaurant &amp; Grill à Lomé : plats faits maison, carte du jour, livraison ou retrait. Gérez aussi votre restaurant." />
     <meta name="twitter:image" content="https://resataurant-savora.vercel.app/og-image.png" />
     <meta name="twitter:image:alt" content="Logo Savora — Restaurant &amp; Grill" />
 
     <meta name="theme-color" content="#c2410c" />
-    <title>Savora — Commande & gestion de restaurant</title>
+    <title>Savora — Restaurant &amp; Grill à Lomé | Commande en ligne</title>
+
+    <!-- Données publiques vérifiées via /api/restaurant ; à mettre à jour si la fiche change. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://resataurant-savora.vercel.app/#website",
+            "url": "https://resataurant-savora.vercel.app/",
+            "name": "Savora",
+            "description": "Savora Restaurant & Grill à Lomé : commande en ligne, carte du jour, livraison ou retrait.",
+            "inLanguage": "fr-FR",
+            "publisher": {
+              "@id": "https://resataurant-savora.vercel.app/#organization"
+            }
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://resataurant-savora.vercel.app/#organization",
+            "name": "Savora",
+            "url": "https://resataurant-savora.vercel.app/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://resataurant-savora.vercel.app/logo-savora.png",
+              "width": 500,
+              "height": 500
+            }
+          },
+          {
+            "@type": "Restaurant",
+            "@id": "https://resataurant-savora.vercel.app/#restaurant",
+            "name": "Savora Restaurant & Grill",
+            "url": "https://resataurant-savora.vercel.app/",
+            "description": "Restaurant & Grill à Lomé : carte faite maison, commande en ligne, livraison ou retrait.",
+            "telephone": "+228 70 30 97 44",
+            "email": "contact@savora.restaurant",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Boulevard du 13 Janvier",
+              "addressLocality": "Lomé"
+            },
+            "openingHoursSpecification": [
+              {
+                "@type": "OpeningHoursSpecification",
+                "dayOfWeek": [
+                  "Monday",
+                  "Tuesday",
+                  "Wednesday",
+                  "Thursday"
+                ],
+                "opens": "11:30",
+                "closes": "23:00"
+              },
+              {
+                "@type": "OpeningHoursSpecification",
+                "dayOfWeek": [
+                  "Friday",
+                  "Saturday"
+                ],
+                "opens": "11:30",
+                "closes": "00:00"
+              },
+              {
+                "@type": "OpeningHoursSpecification",
+                "dayOfWeek": "Sunday",
+                "opens": "12:00",
+                "closes": "22:30"
+              }
+            ],
+            "currenciesAccepted": "XOF",
+            "hasMenu": "https://resataurant-savora.vercel.app/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://resataurant-savora.vercel.app/logo-savora.png",
+              "width": 500,
+              "height": 500
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -47,3 +47,92 @@ describe("Partage sur les réseaux sociaux (Open Graph)", () => {
     assert.ok(png.length < 5 * 1024 * 1024, "image trop lourde pour les réseaux sociaux");
   });
 });
+
+describe("SEO technique", () => {
+  const publicFile = (name: string): string =>
+    readFileSync(new URL(`../public/${name}`, import.meta.url), "utf8");
+
+  test("la page déclare l'URL canonique de production", () => {
+    const canonical = html.match(/<link\s+rel="canonical"\s+href="([^"]+)"/)?.[1];
+    assert.equal(canonical, "https://resataurant-savora.vercel.app/");
+  });
+
+  test("le titre et la description sont courts et décrivent Savora", () => {
+    const title = html.match(/<title>([^<]+)<\/title>/)?.[1] ?? "";
+    const description = meta('name="description"') ?? "";
+
+    assert.match(title, /Savora/);
+    assert.ok(title.length <= 60, `titre trop long (${title.length} caractères)`);
+    assert.match(description, /Savora/);
+    assert.ok(
+      description.length >= 80 && description.length <= 160,
+      `description de longueur inattendue (${description.length} caractères)`,
+    );
+  });
+
+  test("les favicons référencés sont ceux de Savora", () => {
+    assert.match(html, /<link rel="icon" type="image\/png" sizes="64x64" href="\/favicon\.png"/);
+    assert.match(html, /<link rel="apple-touch-icon"[^>]+href="\/logo-savora-sm\.png"/);
+    assert.doesNotMatch(html, /href="\/favicon\.svg"/);
+  });
+
+  test("robots.txt autorise la page publique, exclut l'API et pointe le sitemap", () => {
+    const robots = publicFile("robots.txt");
+
+    assert.match(robots, /^User-agent:\s*\*$/m);
+    assert.match(robots, /^Allow:\s*\/$/m);
+    assert.match(robots, /^Disallow:\s*\/api\/$/m);
+    assert.match(
+      robots,
+      /^Sitemap:\s*https:\/\/resataurant-savora\.vercel\.app\/sitemap\.xml$/m,
+    );
+    assert.doesNotMatch(robots, /^Disallow:\s*\/$/m);
+  });
+
+  test("sitemap.xml ne contient que l'URL publique canonique", () => {
+    const sitemap = publicFile("sitemap.xml");
+    const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
+
+    assert.deepEqual(locs, ["https://resataurant-savora.vercel.app/"]);
+    assert.doesNotMatch(sitemap, /\/api\//);
+  });
+
+  test("les données structurées décrivent le site, l'organisation et la fiche restaurant réelle", () => {
+    const jsonLd = html.match(
+      /<script type="application\/ld\+json">([\s\S]*?)<\/script>/,
+    )?.[1];
+    assert.ok(jsonLd, "JSON-LD manquant");
+
+    const data = JSON.parse(jsonLd) as {
+      "@graph"?: Array<Record<string, unknown>>;
+    };
+    const graph = data["@graph"] ?? [];
+    const types = graph.map((node) => node["@type"]);
+
+    assert.ok(types.includes("WebSite"));
+    assert.ok(types.includes("Organization"));
+    assert.ok(types.includes("Restaurant"));
+    assert.ok(!types.includes("LocalBusiness"));
+
+    const website = graph.find((node) => node["@type"] === "WebSite");
+    assert.equal(website?.["url"], "https://resataurant-savora.vercel.app/");
+
+    const restaurant = graph.find((node) => node["@type"] === "Restaurant") as
+      | Record<string, unknown>
+      | undefined;
+    assert.ok(restaurant, "fiche Restaurant manquante");
+    assert.equal(restaurant["name"], "Savora Restaurant & Grill");
+    assert.equal(restaurant["telephone"], "+228 70 30 97 44");
+    assert.equal(restaurant["email"], "contact@savora.restaurant");
+    assert.equal(restaurant["currenciesAccepted"], "XOF");
+    assert.ok(Array.isArray(restaurant["openingHoursSpecification"]));
+
+    const address = restaurant["address"] as Record<string, unknown> | undefined;
+    assert.equal(address?.["streetAddress"], "Boulevard du 13 Janvier");
+    assert.equal(address?.["addressLocality"], "Lomé");
+
+    assert.ok(!("aggregateRating" in restaurant), "aucune note inventée");
+    assert.ok(!("review" in restaurant), "aucun avis inventé");
+    assert.ok(!("priceRange" in restaurant), "aucun prix inventé");
+  });
+});
