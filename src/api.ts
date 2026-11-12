@@ -81,8 +81,105 @@ export async function submitOrder(payload: {
       return { success: false, error: data.error || 'Erreur lors de la commande.' };
     }
     return { success: true, whatsappUrl: data.whatsappUrl, order: data.order };
-  } catch (err) {
+  } catch {
     return { success: false, error: 'Impossible de joindre le serveur.' };
+  }
+}
+
+// GENIUSPAY PAYMENTS
+export async function initiateGeniusPayPayment(orderId: string): Promise<{
+  success: boolean;
+  checkoutUrl?: string;
+  paymentId?: string;
+  isSimulated?: boolean;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`${BASE_URL}/payments/geniuspay/initiate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return {
+        success: false,
+        error: data.error || "Erreur lors de l'initialisation du paiement GeniusPay.",
+      };
+    }
+    return {
+      success: true,
+      checkoutUrl: data.checkoutUrl,
+      paymentId: data.paymentId,
+      isSimulated: data.isSimulated,
+    };
+  } catch {
+    return { success: false, error: 'Impossible de joindre le serveur de paiement.' };
+  }
+}
+
+export async function getGeniusPayPaymentStatus(params: {
+  orderId?: string;
+  paymentId?: string;
+}): Promise<{
+  success: boolean;
+  payment?: {
+    id: string;
+    status: string;
+    amount: number;
+    currency: string;
+    provider: string;
+    checkoutUrl?: string;
+  };
+  order?: {
+    id: string;
+    orderNumber: string;
+    status: string;
+    total: number;
+    deliveryMethod: string;
+  };
+  error?: string;
+}> {
+  try {
+    const query = new URLSearchParams();
+    if (params.orderId) query.set('orderId', params.orderId);
+    if (params.paymentId) query.set('paymentId', params.paymentId);
+
+    const res = await fetch(`${BASE_URL}/payments/geniuspay/status?${query.toString()}`, {
+      cache: 'no-store',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Paiement introuvable.' };
+    }
+    return {
+      success: true,
+      payment: data.payment,
+      order: data.order,
+    };
+  } catch {
+    return { success: false, error: 'Erreur de connexion au serveur.' };
+  }
+}
+
+export async function simulateGeniusPayPayment(params: {
+  paymentId?: string;
+  orderId?: string;
+  status?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE_URL}/payments/geniuspay/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Erreur lors de la simulation.' };
+    }
+    return { success: true };
+  } catch {
+    return { success: false, error: 'Erreur de connexion.' };
   }
 }
 

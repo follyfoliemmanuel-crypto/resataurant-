@@ -104,6 +104,12 @@ export const config = {
   emailFrom: process.env.EMAIL_FROM ?? "onboarding@resend.dev",
   sessionCookie: "savora_sid",
   sessionDays: 14,
+  geniuspay: {
+    apiKey: process.env.GENIUSPAY_API_KEY ?? "",
+    apiSecret: process.env.GENIUSPAY_API_SECRET ?? "",
+    webhookSecret: process.env.GENIUSPAY_WEBHOOK_SECRET ?? "",
+    baseUrl: (process.env.GENIUSPAY_BASE_URL?.trim() || "https://geniuspay.ci/api/v1/merchant").replace(/\/+$/, ""),
+  },
 };
 
 export function requireDatabaseUrl() {

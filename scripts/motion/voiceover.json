@@ -1,0 +1,30 @@
+{
+  "voice": "Microsoft Hortense Desktop",
+  "rate": -1,
+  "scenes": [
+    {
+      "id": "ouverture",
+      "text": "Savora. Restaurant et grill, au cœur de Lomé.||Bienvenue à table."
+    },
+    {
+      "id": "feu",
+      "text": "Tout commence par le feu.||Des braises vives, des viandes choisies, et ce goût fumé qu'on ne fabrique pas."
+    },
+    {
+      "id": "carte",
+      "text": "Chaque jour, une carte courte et franche.||Produits frais, recettes maison, saveurs généreuses.||Rien d'inutile."
+    },
+    {
+      "id": "commande",
+      "text": "Choisissez vos plats, commandez en quelques secondes.||Sur place, à emporter, ou livrés chez vous.||Et la confirmation arrive aussitôt sur WhatsApp."
+    },
+    {
+      "id": "gestion",
+      "text": "Et côté cuisine, tout est sous contrôle.||Menu, commandes, stocks : un tableau de bord clair, pensé pour le service."
+    },
+    {
+      "id": "signature",
+      "text": "Savora.||La cuisine du feu, simplement.||Commandez maintenant."
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { PlatCard } from './components/PlatCard';
 import { CartDrawer } from './components/CartDrawer';
+import { PaymentStatusPage } from './components/PaymentStatusPage';
 import { usePolling } from './hooks/usePolling';
 import { useServerEvents } from './hooks/useServerEvents';
 import { AdminModal } from './components/AdminModal';
@@ -38,9 +39,25 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [verifyNotice, setVerifyNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const getInitialPaymentRoute = (): 'success' | 'error' | 'simulation' | null => {
+    if (typeof window === 'undefined') return null;
+    const p = window.location.pathname;
+    if (p.startsWith('/paiement/succes')) return 'success';
+    if (p.startsWith('/paiement/echec')) return 'error';
+    if (p.startsWith('/paiement/simulation-geniuspay')) return 'simulation';
+    return null;
+  };
+
+  const [paymentRoute, setPaymentRoute] = useState<'success' | 'error' | 'simulation' | null>(getInitialPaymentRoute);
+
   // Load initial data
   useEffect(() => {
     loadData();
+    const handlePopState = () => {
+      setPaymentRoute(getInitialPaymentRoute());
+    };
+    window.addEventListener('popstate', handlePopState);
+
     const params = new URLSearchParams(window.location.search);
     const verifyToken = params.get('verifyToken');
     const tokenForReset = params.get('resetToken');
@@ -67,7 +84,16 @@ export function App() {
     } else {
       checkAuth();
     }
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
+
+  const handleNavigateHome = () => {
+    window.history.pushState({}, '', '/');
+    setPaymentRoute(null);
+  };
 
   const handleVerifyEmail = async (token: string) => {
     const res = await verifyEmail(token);
@@ -203,80 +229,90 @@ export function App() {
         onLogout={handleLogout}
       />
 
-      <Hero
-        restaurant={restaurant}
-        onExploreMenu={() => {
-          const el = document.getElementById('menu-section');
-          el?.scrollIntoView({ behavior: 'smooth' });
-        }}
-      />
+      {paymentRoute ? (
+        <PaymentStatusPage
+          mode={paymentRoute}
+          restaurant={restaurant}
+          onNavigateHome={handleNavigateHome}
+        />
+      ) : (
+        <>
+          <Hero
+            restaurant={restaurant}
+            onExploreMenu={() => {
+              const el = document.getElementById('menu-section');
+              el?.scrollIntoView({ behavior: 'smooth' });
+            }}
+          />
 
-      {/* Main Menu Section */}
-      <main id="menu-section" className="flex-1 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-10 sm:py-14 w-full">
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between mb-6 sm:mb-8 gap-4">
-          <div>
-            <div className="inline-flex items-center gap-2 text-xs font-bold text-orange-600 uppercase tracking-widest mb-1.5">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Notre Carte du Jour</span>
+          {/* Main Menu Section */}
+          <main id="menu-section" className="flex-1 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-10 sm:py-14 w-full">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between mb-6 sm:mb-8 gap-4">
+              <div>
+                <div className="inline-flex items-center gap-2 text-xs font-bold text-orange-600 uppercase tracking-widest mb-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Notre Carte du Jour</span>
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-black text-stone-900 tracking-tight">
+                  Faits maison avec passion
+                </h2>
+              </div>
+
+              {/* Category Filter Pills */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-none">
+                <button
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                    selectedCategory === 'all'
+                      ? 'bg-stone-900 text-white shadow-sm'
+                      : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
+                  }`}
+                >
+                  Tous ({plats.length})
+                </button>
+                {categories.map(cat => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                      selectedCategory === cat.id
+                        ? 'bg-stone-900 text-white shadow-sm'
+                        : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
+                    }`}
+                  >
+                    {cat.name}
+                  </button>
+                ))}
+              </div>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-black text-stone-900 tracking-tight">
-              Faits maison avec passion
-            </h2>
-          </div>
 
-          {/* Category Filter Pills */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-none">
-            <button
-              onClick={() => setSelectedCategory('all')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                selectedCategory === 'all'
-                  ? 'bg-stone-900 text-white shadow-sm'
-                  : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
-              }`}
-            >
-              Tous ({plats.length})
-            </button>
-            {categories.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                  selectedCategory === cat.id
-                    ? 'bg-stone-900 text-white shadow-sm'
-                    : 'bg-white text-stone-600 hover:bg-stone-100 border border-stone-200'
-                }`}
-              >
-                {cat.name}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Dish Grid with photos */}
-        {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            {[1, 2, 3, 4, 5, 6].map(n => (
-              <div key={n} className="bg-white rounded-2xl p-5 border border-stone-200 animate-pulse h-64" />
-            ))}
-          </div>
-        ) : filteredPlats.length === 0 ? (
-          <div className="bg-white rounded-3xl border border-stone-200 p-8 sm:p-12 text-center text-stone-400">
-            <p className="font-semibold text-stone-600 text-base">Aucun plat dans cette sélection</p>
-            <p className="text-xs text-stone-400 mt-1">Sélectionnez une autre catégorie pour explorer le menu.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 animate-fade-in">
-            {filteredPlats.map(plat => (
-              <PlatCard
-                key={plat.id}
-                plat={plat}
-                currency={currency}
-                onAddToCart={handleAddToCart}
-              />
-            ))}
-          </div>
-        )}
-      </main>
+            {/* Dish Grid with photos */}
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                {[1, 2, 3, 4, 5, 6].map(n => (
+                  <div key={n} className="bg-white rounded-2xl p-5 border border-stone-200 animate-pulse h-64" />
+                ))}
+              </div>
+            ) : filteredPlats.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-stone-200 p-8 sm:p-12 text-center text-stone-400">
+                <p className="font-semibold text-stone-600 text-base">Aucun plat dans cette sélection</p>
+                <p className="text-xs text-stone-400 mt-1">Sélectionnez une autre catégorie pour explorer le menu.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 animate-fade-in">
+                {filteredPlats.map(plat => (
+                  <PlatCard
+                    key={plat.id}
+                    plat={plat}
+                    currency={currency}
+                    onAddToCart={handleAddToCart}
+                  />
+                ))}
+              </div>
+            )}
+          </main>
+        </>
+      )}
 
       {/* Footer */}
       <footer className="bg-stone-900 text-white border-t border-stone-800 py-10 sm:py-12 mt-auto">

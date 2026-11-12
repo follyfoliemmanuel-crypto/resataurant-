@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { X, Trash2, Plus, Minus, ArrowRight, MessageCircle, Bike, Store, Tag } from "lucide-react";
+import { X, Trash2, Plus, Minus, ArrowRight, MessageCircle, Bike, Store, Tag, CreditCard, ShieldCheck } from "lucide-react";
 import type { CartItem, RestaurantSettings } from "../types";
-import { checkPromo, submitOrder } from "../api";
+import { checkPromo, submitOrder, initiateGeniusPayPayment } from "../api";
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -23,6 +23,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   const [deliveryMethod, setDeliveryMethod] = useState<"pickup" | "delivery">("pickup");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [orderNote, setOrderNote] = useState("");
+  const [paymentChoice, setPaymentChoice] = useState<"geniuspay" | "whatsapp">("geniuspay");
   const [promoCodeInput, setPromoCodeInput] = useState("");
   const [appliedPromo, setAppliedPromo] = useState<{ code: string; type: string; value: number } | null>(null);
   const [promoError, setPromoError] = useState("");
@@ -81,6 +82,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         promoCode: appliedPromo?.code,
       });
       if (!res.success || !res.order) throw new Error(res.error || "Erreur lors de la création de la commande.");
+
+      if (paymentChoice === "geniuspay") {
+        const paymentInit = await initiateGeniusPayPayment(res.order.id);
+        if (!paymentInit.success || !paymentInit.checkoutUrl) {
+          throw new Error(paymentInit.error || "Impossible d'ouvrir le checkout sécurisé GeniusPay.");
+        }
+        callbacksRef.current.onClearCart();
+        window.location.href = paymentInit.checkoutUrl;
+        return;
+      }
+
       callbacksRef.current.onClearCart();
       callbacksRef.current.onOrderSuccess({ order: res.order, whatsappUrl: res.whatsappUrl });
     } catch (error) {
@@ -140,10 +152,74 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               <div><label className="block text-xs font-semibold mb-1">Mode de réception</label><div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2"><button type="button" onClick={() => setDeliveryMethod("pickup")} className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 ${deliveryMethod === "pickup" ? "bg-orange-50 border-orange-500 text-orange-800" : "border-stone-200"}`}><Store className="w-4 h-4" />À emporter</button><button type="button" onClick={() => setDeliveryMethod("delivery")} className={`p-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 text-center ${deliveryMethod === "delivery" ? "bg-orange-50 border-orange-500 text-orange-800" : "border-stone-200"}`}><Bike className="w-4 h-4 shrink-0" />Livraison (+{formatMoney(Number(restaurant?.delivery_fee || 0))} {currency})</button></div></div>
               {deliveryMethod === "delivery" && <div><label className="block text-xs font-semibold mb-1">Adresse de livraison *</label><textarea required rows={2} value={deliveryAddress} onChange={e => setDeliveryAddress(e.target.value)} className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-sm" /></div>}
               <div><label className="block text-xs font-semibold mb-1">Note ou instructions (optionnel)</label><textarea rows={2} value={orderNote} onChange={e => setOrderNote(e.target.value)} className="w-full bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-sm" /></div>
+
+              <div className="pt-2 border-t border-stone-100">
+                <label className="block text-xs font-semibold mb-2 flex items-center justify-between">
+                  <span>Moyen de paiement</span>
+                  <span className="text-[11px] text-stone-400 font-normal flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    Paiement sécurisé
+                  </span>
+                </label>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentChoice("geniuspay")}
+                    className={`w-full p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                      paymentChoice === "geniuspay"
+                        ? "bg-orange-50/80 border-orange-500 shadow-xs"
+                        : "bg-stone-50/50 border-stone-200 hover:bg-stone-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-orange-600 text-white flex items-center justify-center font-black text-xs shrink-0 shadow-xs">
+                          GP
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-stone-900">GeniusPay — Mobile Money & Cartes</p>
+                          <p className="text-[11px] text-stone-500">Paiement instantané sécurisé</p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                        Recommandé
+                      </span>
+                    </div>
+                    <div className="mt-2.5 pt-2 border-t border-stone-200/60 flex flex-wrap gap-1">
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-700 font-medium">T-Money</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-700 font-medium">Moov</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-700 font-medium">Wave</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-700 font-medium">Orange</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-700 font-medium">MTN</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-white border border-stone-200 text-stone-700 font-medium">Cartes bancaires</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentChoice("whatsapp")}
+                    className={`w-full p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                      paymentChoice === "whatsapp"
+                        ? "bg-emerald-50/80 border-emerald-500 shadow-xs"
+                        : "bg-stone-50/50 border-stone-200 hover:bg-stone-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <MessageCircle className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-stone-900">Commander via WhatsApp</p>
+                        <p className="text-[11px] text-stone-500">Paiement au comptoir ou à la livraison</p>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
             </form>}
           </div>
           {cart.length > 0 && <div className="p-4 sm:p-5 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-stone-200 bg-stone-50 space-y-3"><div className="space-y-1.5 text-xs text-stone-600"><div className="flex justify-between"><span>Sous-total</span><span className="font-semibold">{formatMoney(subtotal)} {currency}</span></div>{deliveryMethod === "delivery" && <div className="flex justify-between"><span>Frais de livraison</span><span>{formatMoney(deliveryFee)} {currency}</span></div>}{discount > 0 && <div className="flex justify-between text-emerald-600"><span>Remise promotionnelle</span><span>-{formatMoney(discount)} {currency}</span></div>}<div className="flex justify-between text-sm font-bold pt-2 border-t border-stone-200"><span>Total à payer</span><span className="text-base text-orange-600">{formatMoney(total)} {currency}</span></div></div>
-            {step === "cart" ? <button type="button" onClick={() => { setSubmitError(""); setStep("checkout"); }} className="w-full bg-stone-900 hover:bg-orange-600 text-white font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2"><span>Passer la commande</span><ArrowRight className="w-4 h-4" /></button> : <div className="flex gap-2"><button type="button" disabled={isSubmitting} onClick={() => { setSubmitError(""); setStep("cart"); }} className="px-4 py-3 min-h-11 rounded-xl border border-stone-200 text-xs font-semibold">Retour</button><button type="submit" form="checkout-form" disabled={isSubmitting} className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-semibold py-3 min-h-11 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"><MessageCircle className="w-4 h-4" /><span>{isSubmitting ? "Traitement..." : "Valider via WhatsApp"}</span></button></div>}
+            {step === "cart" ? <button type="button" onClick={() => { setSubmitError(""); setStep("checkout"); }} className="w-full bg-stone-900 hover:bg-orange-600 text-white font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-all"><span>Passer la commande</span><ArrowRight className="w-4 h-4" /></button> : <div className="flex gap-2"><button type="button" disabled={isSubmitting} onClick={() => { setSubmitError(""); setStep("cart"); }} className="px-4 py-3 min-h-11 rounded-xl border border-stone-200 text-xs font-semibold cursor-pointer hover:bg-stone-100">Retour</button>{paymentChoice === "geniuspay" ? <button type="submit" form="checkout-form" disabled={isSubmitting} className="flex-1 bg-stone-900 hover:bg-orange-600 text-white font-semibold py-3 min-h-11 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-stone-900/10"><CreditCard className="w-4 h-4 text-orange-400" /><span>{isSubmitting ? "Initialisation GeniusPay..." : `Payer ${formatMoney(total)} ${currency}`}</span></button> : <button type="submit" form="checkout-form" disabled={isSubmitting} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-3 min-h-11 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shadow-md shadow-emerald-600/10"><MessageCircle className="w-4 h-4" /><span>{isSubmitting ? "Traitement..." : "Valider via WhatsApp"}</span></button>}</div>}
           </div>}
         </div>
       </div>

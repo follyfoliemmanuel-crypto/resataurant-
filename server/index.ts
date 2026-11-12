@@ -43,10 +43,18 @@ import {
   previousWeekPeriod,
 } from "./lib/reports.js";
 import { normalizeImageUrl, parseImageDataUrl } from "./lib/images.js";
+import {
+  createGeniusPayPayment,
+  fetchGeniusPayPayment,
+  verifyGeniusPayWebhookSignature,
+  mapGeniusPayEventToStatus,
+} from "./lib/geniuspay.js";
 
 const MAX_BODY_SIZE = 1024 * 1024; // 1 Mo max body
 
-async function parseBody(req: http.IncomingMessage): Promise<any> {
+async function parseBodyWithRaw(
+  req: http.IncomingMessage,
+): Promise<{ body: any; rawBody: string }> {
   return new Promise((resolve, reject) => {
     let data = "";
     let size = 0;
@@ -64,9 +72,9 @@ async function parseBody(req: http.IncomingMessage): Promise<any> {
 
     const onEnd = () => {
       cleanup();
-      if (!data) return resolve({});
+      if (!data) return resolve({ body: {}, rawBody: "" });
       try {
-        resolve(JSON.parse(data));
+        resolve({ body: JSON.parse(data), rawBody: data });
       } catch {
         reject(new HttpError(400, "Corps JSON invalide."));
       }
@@ -87,6 +95,11 @@ async function parseBody(req: http.IncomingMessage): Promise<any> {
     req.on("end", onEnd);
     req.on("error", onError);
   });
+}
+
+async function parseBody(req: http.IncomingMessage): Promise<any> {
+  const { body } = await parseBodyWithRaw(req);
+  return body;
 }
 
 function toFetchRequest(req: http.IncomingMessage): Request {
@@ -2503,6 +2516,449 @@ export const server = http.createServer(async (req, res) => {
       });
 
       return sendResponse(res, json({ success: true, paymentId, status }));
+    }
+
+    // --- GENIUSPAY: INITIATE PAYMENT ---
+    if (req.method === "POST" && pathname === "/api/payments/geniuspay/initiate") {
+      const body = await parseBody(req);
+      const orderId = String(body.orderId ?? "").trim();
+
+      if (!orderId) {
+        throw new HttpError(400, "Identifiant de commande obligatoire.");
+      }
+
+      const orderRes = await query<{
+        id: string;
+        order_number: string;
+        total: string;
+        status: string;
+        client_name: string;
+        client_phone: string;
+        client_email: string | null;
+        client_user_id: string | null;
+      }>(
+        `SELECT o.id, o.order_number, o.total, o.status,
+                c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
+                c.user_id AS client_user_id
+         FROM orders o
+         JOIN clients c ON c.id = o.client_id
+         WHERE o.id = $1 AND o.restaurant_id = $2
+         LIMIT 1`,
+        [orderId, ctx.restaurantId],
+      );
+
+      const order = orderRes.rows[0];
+      if (!order) {
+        throw new HttpError(404, "Commande introuvable.");
+      }
+
+      if (ctx.user) {
+        const isOwner = order.client_user_id === ctx.user.id;
+        const isStaff = ctx.user.role !== "customer";
+        if (!isOwner && !isStaff && order.client_user_id) {
+          throw new HttpError(403, "Cette commande ne vous appartient pas.", "forbidden");
+        }
+      }
+
+      if (order.status === "cancelled") {
+        throw new HttpError(400, "Cette commande a été annulée.");
+      }
+
+      const alreadyPaidRes = await query<{ id: string }>(
+        `SELECT id FROM payments WHERE order_id = $1 AND status = 'paid' LIMIT 1`,
+        [order.id],
+      );
+      if (alreadyPaidRes.rows.length > 0) {
+        throw new HttpError(400, "Cette commande a déjà été payée.");
+      }
+
+      const amount = Number(order.total);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new HttpError(400, "Montant de commande invalide.");
+      }
+
+      // Normalisation du numéro de téléphone
+      let phone = String(order.client_phone || "").replace(/[\s-]/g, "");
+      if (!phone.startsWith("+")) {
+        if (/^[0-9]{8}$/.test(phone)) {
+          phone = `+228${phone}`;
+        } else if (/^228[0-9]{8}$/.test(phone)) {
+          phone = `+${phone}`;
+        }
+      }
+
+      const paymentRes = await query<{ id: string }>(
+        `INSERT INTO payments (order_id, provider, payment_method, amount, currency, status)
+         VALUES ($1, 'geniuspay', 'geniuspay', $2, 'XOF', 'pending')
+         RETURNING id`,
+        [order.id, amount],
+      );
+
+      const paymentId = paymentRes.rows[0].id;
+
+      let paymentResult;
+      try {
+        paymentResult = await createGeniusPayPayment({
+          amount,
+          currency: "XOF",
+          description: `Commande Savora #${order.order_number}`,
+          customer: {
+            name: order.client_name || "Client Savora",
+            phone: phone || "+22890000000",
+            email: order.client_email || undefined,
+          },
+          success_url: `${config.appUrl}/paiement/succes?order_id=${encodeURIComponent(order.id)}&payment_id=${encodeURIComponent(paymentId)}`,
+          error_url: `${config.appUrl}/paiement/echec?order_id=${encodeURIComponent(order.id)}&payment_id=${encodeURIComponent(paymentId)}`,
+          metadata: {
+            order_id: order.id,
+            payment_id: paymentId,
+            source: "savora",
+          },
+        });
+      } catch (err) {
+        await query(
+          `UPDATE payments SET status = 'failed', updated_at = now() WHERE id = $1`,
+          [paymentId],
+        );
+        throw err;
+      }
+
+      await query(
+        `UPDATE payments
+         SET provider_reference = $1,
+             provider_transaction_id = $2,
+             checkout_url = $3,
+             status = 'processing',
+             updated_at = now()
+         WHERE id = $4`,
+        [
+          paymentResult.providerReference ?? null,
+          paymentResult.providerTransactionId ?? null,
+          paymentResult.checkoutUrl ?? null,
+          paymentId,
+        ],
+      );
+
+      return sendResponse(
+        res,
+        json(
+          {
+            success: true,
+            paymentId,
+            checkoutUrl: paymentResult.checkoutUrl,
+            status: "processing",
+            isSimulated: paymentResult.isSimulated,
+          },
+          201,
+        ),
+      );
+    }
+
+    // --- GENIUSPAY: WEBHOOK NOTIFICATIONS ---
+    if (req.method === "POST" && pathname === "/api/payments/geniuspay/webhook") {
+      const { body, rawBody } = await parseBodyWithRaw(req);
+
+      let sigHeader = String(
+        req.headers["x-geniuspay-signature"] ||
+        req.headers["x-signature"] ||
+        req.headers["x-webhook-signature"] ||
+        "",
+      ).trim();
+
+      let tsHeader = String(
+        req.headers["x-geniuspay-timestamp"] ||
+        req.headers["x-timestamp"] ||
+        req.headers["x-webhook-timestamp"] ||
+        "",
+      ).trim();
+
+      if (sigHeader.includes("t=") && (!tsHeader || sigHeader.includes("v1="))) {
+        for (const part of sigHeader.split(",")) {
+          const [k, v] = part.split("=");
+          if (k && v) {
+            const key = k.trim().toLowerCase();
+            if (key === "t") tsHeader = v.trim();
+            if (key === "v1" || key === "s" || key === "signature") sigHeader = v.trim();
+          }
+        }
+      }
+
+      const verification = verifyGeniusPayWebhookSignature({
+        rawBody,
+        signature: sigHeader,
+        timestamp: tsHeader,
+      });
+
+      if (!verification.valid) {
+        console.warn(
+          "[GeniusPay Webhook] Signature rejetée :",
+          verification.reason,
+        );
+        throw new HttpError(
+          401,
+          `Signature webhook invalide ou expirée (${verification.reason}).`,
+          "invalid_signature",
+        );
+      }
+
+      const payload = (body && typeof body === "object" ? body : {}) as any;
+      const eventName = String(
+        payload.event || payload.type || payload.status || "",
+      );
+      const mappedStatus = mapGeniusPayEventToStatus(eventName);
+
+      if (!mappedStatus) {
+        return sendResponse(
+          res,
+          json({ success: true, message: "Événement ignoré (non pertinent)." }),
+        );
+      }
+
+      const eventData = payload.data || payload;
+      const metadata = eventData.metadata || payload.metadata || {};
+      const orderId = String(metadata.order_id || eventData.order_id || "").trim() || null;
+      const paymentId = String(metadata.payment_id || eventData.payment_id || "").trim() || null;
+      const providerRef = String(eventData.reference || eventData.id || "").trim() || null;
+
+      const eventId = String(
+        payload.id ||
+        payload.event_id ||
+        (providerRef ? `${providerRef}_${eventName}` : `${paymentId || orderId}_${eventName}_${tsHeader}`),
+      ).trim();
+
+      if (eventId) {
+        try {
+          const existingEvent = await query<{ id: string }>(
+            `SELECT id FROM payment_events WHERE provider = 'geniuspay' AND event_id = $1 LIMIT 1`,
+            [eventId],
+          );
+          if (existingEvent.rows.length > 0) {
+            return sendResponse(
+              res,
+              json({
+                success: true,
+                idempotent: true,
+                message: "Événement déjà traité.",
+              }),
+            );
+          }
+        } catch {
+          // Table payment_events facultative en environnement de test
+        }
+      }
+
+      await withTransaction(async (client) => {
+        const lockedRes = await client.query<{
+          id: string;
+          order_id: string;
+          status: string;
+          amount: string;
+        }>(
+          `SELECT id, order_id, status, amount
+           FROM payments
+           WHERE ($1::uuid IS NOT NULL AND id = $1)
+              OR ($2::text IS NOT NULL AND provider_reference = $2)
+              OR ($3::uuid IS NOT NULL AND order_id = $3 AND provider = 'geniuspay')
+           ORDER BY created_at DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [paymentId, providerRef, orderId],
+        );
+
+        const currentPayment = lockedRes.rows[0];
+
+        if (currentPayment) {
+          let finalStatus = mappedStatus;
+          if (currentPayment.status === "paid" && mappedStatus !== "refunded") {
+            finalStatus = "paid";
+          }
+
+          await client.query(
+            `UPDATE payments
+             SET status = $1,
+                 provider_reference = COALESCE($2, provider_reference),
+                 provider_transaction_id = COALESCE($3, provider_transaction_id),
+                 updated_at = now()
+             WHERE id = $4`,
+            [finalStatus, providerRef, eventData.id ?? null, currentPayment.id],
+          );
+
+          if (finalStatus === "paid") {
+            await client.query(
+              `UPDATE orders
+               SET status = 'confirmed', updated_at = now()
+               WHERE id = $1 AND status = 'pending'`,
+              [currentPayment.order_id],
+            );
+          }
+        }
+
+        if (eventId) {
+          try {
+            await client.query(
+              `INSERT INTO payment_events
+                (provider, event_id, event_type, payment_id, order_id, payload, status)
+               VALUES ('geniuspay', $1, $2, $3, $4, $5, 'processed')
+               ON CONFLICT (provider, event_id) DO NOTHING`,
+              [
+                eventId,
+                eventName,
+                currentPayment?.id ?? (paymentId || null),
+                currentPayment?.order_id ?? (orderId || null),
+                JSON.stringify(payload),
+              ],
+            );
+          } catch {
+            // Ignorer si la table n'est pas encore migrée
+          }
+        }
+      });
+
+      return sendResponse(
+        res,
+        json({ success: true, status: mappedStatus, processed: true }),
+      );
+    }
+
+    // --- GENIUSPAY: PAYMENT STATUS QUERY ---
+    if (req.method === "GET" && pathname === "/api/payments/geniuspay/status") {
+      const orderId = String(url.searchParams.get("orderId") ?? "").trim();
+      const paymentId = String(url.searchParams.get("paymentId") ?? "").trim();
+
+      if (!orderId && !paymentId) {
+        throw new HttpError(400, "Identifiant de commande ou de paiement requis.");
+      }
+
+      const paymentRes = await query<{
+        id: string;
+        order_id: string;
+        status: string;
+        amount: string;
+        currency: string;
+        provider: string;
+        provider_reference: string | null;
+        provider_transaction_id: string | null;
+        checkout_url: string | null;
+      }>(
+        `SELECT id, order_id, status, amount, currency, provider,
+                provider_reference, provider_transaction_id, checkout_url
+         FROM payments
+         WHERE ($1::uuid IS NOT NULL AND id = $1)
+            OR ($2::uuid IS NOT NULL AND order_id = $2 AND provider = 'geniuspay')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [paymentId || null, orderId || null],
+      );
+
+      const payment = paymentRes.rows[0];
+      if (!payment) {
+        throw new HttpError(404, "Paiement introuvable.");
+      }
+
+      if (
+        (payment.status === "pending" || payment.status === "processing") &&
+        (payment.provider_reference || payment.provider_transaction_id)
+      ) {
+        const checkId = payment.provider_transaction_id || payment.provider_reference!;
+        const verified = await fetchGeniusPayPayment(checkId);
+        if (verified.success && verified.status === "paid") {
+          await withTransaction(async (client) => {
+            await client.query(
+              `UPDATE payments SET status = 'paid', updated_at = now() WHERE id = $1`,
+              [payment.id],
+            );
+            await client.query(
+              `UPDATE orders SET status = 'confirmed', updated_at = now()
+               WHERE id = $1 AND status = 'pending'`,
+              [payment.order_id],
+            );
+          });
+          payment.status = "paid";
+        }
+      }
+
+      const orderRes = await query<{
+        id: string;
+        order_number: string;
+        status: string;
+        total: string;
+        delivery_method: string;
+      }>(
+        `SELECT id, order_number, status, total, delivery_method
+         FROM orders WHERE id = $1 LIMIT 1`,
+        [payment.order_id],
+      );
+
+      const order = orderRes.rows[0] ?? null;
+
+      return sendResponse(
+        res,
+        json({
+          success: true,
+          payment: {
+            id: payment.id,
+            status: payment.status,
+            amount: Number(payment.amount),
+            currency: payment.currency,
+            provider: payment.provider,
+            checkoutUrl: payment.checkout_url,
+          },
+          order: order
+            ? {
+                id: order.id,
+                orderNumber: order.order_number,
+                status: order.status,
+                total: Number(order.total),
+                deliveryMethod: order.delivery_method,
+              }
+            : null,
+        }),
+      );
+    }
+
+    // --- GENIUSPAY: SIMULATION ENDPOINT (DEV ONLY) ---
+    if (req.method === "POST" && pathname === "/api/payments/geniuspay/simulate") {
+      if (config.isProd) {
+        throw new HttpError(403, "Simulation désactivée en production.");
+      }
+
+      const body = await parseBody(req);
+      const paymentId = String(body.paymentId ?? "").trim();
+      const orderId = String(body.orderId ?? "").trim();
+      const status = String(body.status ?? "paid").toLowerCase().trim();
+
+      const validStatuses = ["paid", "failed", "cancelled", "refunded"];
+      if (!validStatuses.includes(status)) {
+        throw new HttpError(400, "Statut de simulation invalide.");
+      }
+
+      await withTransaction(async (client) => {
+        const locked = await client.query<{ id: string; order_id: string }>(
+          `SELECT id, order_id FROM payments
+           WHERE ($1::uuid IS NOT NULL AND id = $1)
+              OR ($2::uuid IS NOT NULL AND order_id = $2)
+           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+          [paymentId || null, orderId || null],
+        );
+
+        const current = locked.rows[0];
+        if (!current) throw new HttpError(404, "Paiement introuvable.");
+
+        await client.query(
+          `UPDATE payments SET status = $1, updated_at = now() WHERE id = $2`,
+          [status, current.id],
+        );
+
+        if (status === "paid") {
+          await client.query(
+            `UPDATE orders SET status = 'confirmed', updated_at = now()
+             WHERE id = $1 AND status = 'pending'`,
+            [current.order_id],
+          );
+        }
+      });
+
+      return sendResponse(res, json({ success: true, simulatedStatus: status }));
     }
 
     // --- FALLBACK 404 ---
